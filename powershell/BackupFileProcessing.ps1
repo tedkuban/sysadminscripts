@@ -1,0 +1,511 @@
+<#
+.Synopsis
+    Скрипт для раскладывания бэкапов БД SQL по схеме дед-отец-сын
+.Description
+    Этот скрипт запускается из задания SQL Agent Job после выполнения резервного копирования
+    SQL-Server делает бэкап, затем вызывает удаленное выполнение данного скрипта на сервере
+    долговременного хранения. На этом сервере желательно запретить службу Server совсем для
+    дополнительной защиты от шифраторов и прочей дряни.
+    На сервере долговременного хранения необходимо выполнить команду powershell
+        Set-PSSessionConfiguration Microsoft.PowerShell -ShowSecurityDescriptorUI
+    и разрешить удаленное выполнение команд пользователю, от имени которого выполняется
+    агент SQL Server
+
+    Скрипт запускается и забирает файл с SQL-сервера себе, используя только клиент сетей Microsoft
+    Получив в параметрах имя базы данных, находит папку для ее копий, ищет там файл настроек
+    Пока в настройках предполагается три параметра - количество хранимых копий в каждой из трех папок
+
+    Первым шагом задания на сервере SQL будет скрипт создания бэкапа в файл с определенным именем (пример ниже):
+	DECLARE @DBName sysname = 'TESTDB'
+	DECLARE @BackupPath nvarchar(128) = N'\\SERVER1\Backup'
+	DECLARE @StartTime varchar(10) = SUBSTRING('$(ESCAPE_SQUOTE(STRTDT))',1,4) + '.' + SUBSTRING('$(ESCAPE_SQUOTE(STRTDT))',5,2) + '.' + SUBSTRING('$(ESCAPE_SQUOTE(STRTDT))',7,2)
+	DECLARE @FileName nvarchar(256) = @BackupPath+'\'+@DBName+'\'+@DBName+'_'+@StartTime+'.bak'
+	DECLARE @Descr nvarchar(256) = @DBName + ' Full Database Backup ' + @StartTime
+	BACKUP DATABASE @DBName TO DISK = @FileName WITH NOFORMAT, NOINIT,  NAME = @Descr, SKIP, NOREWIND, NOUNLOAD, COMPRESSION
+
+    Вторым шагом выполняется данный скрипт
+        ##PowerShell -NonInteractive -NoProfile "Invoke-Command -ComputerName SERVER2 -ScriptBlock { D:\sqlagent\BackupFileProcessing.ps1 'TESTDB' '\\SERVER1\Backup' '$(ESCAPE_SQUOTE(STRTDT))' '$(ESCAPE_SQUOTE(MACH))' }"
+        ##PowerShell -NonInteractive -NoProfile "$rs=Invoke-Command -ComputerName SERVER2 -ScriptBlock {&'D:\sqlagent\BackupFileProcessing.ps1' 'TESTDB' '\\SERVER1\Backup' '$(ESCAPE_SQUOTE(STRTDT))' '$(ESCAPE_SQUOTE(MACH))'};$Anchor='#Exit#Code#: ';$et=($rs|Where-Object {$_ -match ('\A'+$Anchor)}|Select-Object -Last 1);If($Null -eq $et){'Error: Unexpected output returned from remote host!";$ex=99}else{$ex=[int]($et.Replace($Anchor,''))};$rs|Foreach-Object{$_};$host.SetShouldExit($ex)"
+        PowerShell -NonInteractive -NoProfile "$rs=Invoke-Command -ComputerName SERVER2 -ScriptBlock {&'D:\sqlagent\BackupFileProcessing.ps1' 'TESTDB' '\\SERVER1\Backup' '$(ESCAPE_SQUOTE(STRTDT))' '$(ESCAPE_SQUOTE(MACH))'};$host.SetShouldExit($rs)"
+
+    Первый и второй параметры скрипта должны совпадать с первым и вторым параметрами кода T-SQL (@DBName и @BackupPath)
+.Parameter DatabaseName
+    Имя базы данных
+.Parameter RemoteStoragePath
+    Откуда брать бэкап
+.Parameter JobStartDate
+    Дата начала задания на сервере SQL (использум только ее, так как бэкап может делаться с переходом суток,
+    а нам нужно найти определенный файл)
+.Parameter $ComputerName
+    Имя вызывающего компьютера (пока не знаю, как его получить изнутри скрипта)
+.Parameter Override
+    Use settings from command line rather then stored in .settings.json file
+.Parameter SaveSettings
+    Save new or default parameters in .settings.json file
+
+#.Parameter RebootHost
+#    Reboot host machine after cleaning all cache files
+#.Parameter NoRestart
+#    Do not start services after cache cleaning
+.Example
+    --
+.Component
+    MS SQL Server
+.Notes
+    Version: 0.9
+    Date modified: 2020.05.31
+    Autor: Fedor Kubanets AKA Teddy
+    Company: HappyLook
+#>
+[CmdletBinding(DefaultParameterSetName="All")]
+Param(
+#  [Parameter(Mandatory=$True,Position=1)]
+  [Parameter(Position=1,Mandatory=$False)] [string]$DatabaseName
+  ,[Parameter(Position=2,Mandatory=$False)] [string]$RemoteStoragePath
+  ,[Parameter(Position=3,Mandatory=$False)] [string]$JobStartDate
+  ,[Parameter(Position=4,Mandatory=$False)] [string]$ComputerName
+  ,[Parameter(Mandatory=$False)] [int]$Level1Copies = 10
+  ,[Parameter(Mandatory=$False)] [int]$Level2Copies = 5
+  ,[Parameter(Mandatory=$False)] [int]$Level3Copies = 10
+  ,[Parameter(Mandatory=$False)] [string]$LocalStoragePath = "E:\BACKUP"
+  ,[Parameter(Mandatory=$False)] [switch]$Override = $false
+  ,[Parameter(Mandatory=$False)] [switch]$SaveSettings = $false
+  ,[Parameter(Mandatory=$False)] [string]$Level1FolderName = '__day'
+  ,[Parameter(Mandatory=$False)] [string]$Level2FolderName = '_week'
+  ,[Parameter(Mandatory=$False)] [string]$Level3FolderName = 'month'
+  ,[Parameter(Mandatory=$False)] [string]$Level2Match = 'Days' # ['Days'|'DayOfWeek'] - сохраняем второй уровень либо в определенный день недели, либо по определенным числам месяца
+  ,[Parameter(Mandatory=$False)] [string]$Level2Days = '1,9,17,25' # 
+  #,[Parameter(Mandatory=$False)] [string]$Level2Days = 0 # Воскресенье
+  ,[Parameter(Mandatory=$False)] [string]$Level3Day = 1 # 1-го числа каждого месяца
+)
+
+function Exit-WithCode
+{
+  param ( $exitcode )
+  ## !ВАЖНО! Строка ниже является якорем, по которому мы получим код возврата
+  ## в Invoke-Command, так как при удаленном выполнении скрипта возвращается
+  ## только текстовый вывод, больше ничего.
+  #Write-Output ('#Exit#Code#: ' + $exitcode)
+  Write-Output ($exitcode)
+  $host.SetShouldExit($exitcode)
+  exit $exitcode
+}
+
+Function Write-Log {
+  Param( [Parameter(Mandatory=$false, ValueFromPipeline=$true)] [String[]] $OutString = "`r`n" )
+  Write-Host $OutString
+  Try {  # Если нет возможности записать лог - вылетаем с ошибкой
+    $OutString | Out-File -Append -FilePath ($script:LocalStorage.FullName+'\BackupFileProcessing.log')
+  }
+  Catch {
+    Write-Host ("Error: Cannot write to log file - exiting!")
+    Write-Host ("Error: " + $Error[0].ToString() )
+    Exit-WithCode 3
+  }
+}
+
+Function Process-OneFile ( $Dir ) {
+
+  Return $True # File processed succesfully
+}
+
+Function Get-FileDate {
+  Param( [Parameter(Mandatory=$True,ValueFromPipeline=$True)] [Object] $File )
+  # Удалим расширение (.bak) и будем считать, что дата в указанном формате содержится в конце имени
+  $FileDateString = ($File.Name).Substring($File.Name.Length-($script:DateFormat.Length+('.bak').Length),$script:DateFormat.Length)
+  $FileDate = Get-Date
+  # Разберем дату архива вычислим год, месяц, день и день недели этой даты
+    #[DateTime]::TryParseExact( $StartDate, $DateFormat, [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::None, [ref] $FileDate )
+  If ( $FileDate::TryParseExact( $FileDateString, $script:DateFormat, [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::None, [ref] $FileDate ) ) {
+    $FileDayOfWeek = [int]$FileDate.DayOfWeek # 0-Sunday ... 6-Saturday
+    $FileYear = [int]$FileDate.Year
+    $FileMonth = [int]$FileDate.Month
+    $FileDay = [int]$FileDate.Day
+    #Write-Log ( "Info: Got date parts from file `"" + $File.Name + "`" - Year $FileYear, Month $FileMonth, Day $FileDay, DoW $FileDayOfWeek")
+    Return $FileDate
+  } Else {
+    Write-Log ( 'Warning: Cannot get backup date from filename "' + $File.Name + '"!')
+    Return $False
+  }
+}
+
+# Условие для уровня 2 - определенный день недели, переданный в параметрах скрипта или каталога базы данных
+# Условие для уровня 2 - определенные дни месяца, переданные в параметрах скрипта или каталога базы данных
+Function Level2Condition {
+  Param( [Parameter(Mandatory=$True,ValueFromPipeline=$True)] [Object] $File )
+  $FileDate = Get-FileDate ( $File )
+  $Match = $False
+  If ( $FileDate ) {
+    If ( $script:Level2Match -match "\ADays\z" ) {
+      Try { $L2Days = ( $script:Level2Days -split ',' ) } Catch { Write-Log 'Warning: Level 2 days is empty of misformatted!'; $L2Days = @() }
+      $Match = ( $L2Days -contains $FileDate.Day )
+    } ElseIf ( $script:Level2Match -match "\ADayOfWeek\z" ) {
+      $Match = ( [int]$FileDate.DayOfWeek -eq $script:Level2Days )
+    } Else {
+      Write-Log ( 'Warning: Unknown level 2 condition type given!')
+    }
+  }
+  #If ( $Match ) {
+  #  Write-Log ( 'Info: File "' + $File.Name + '" matches the condition of level 2')
+  #} Else {
+  #  Write-Log ( 'Info: File "' + $File.Name + '" does not match the condition of level 2')
+  #} 
+  Return $Match
+}
+
+# Условие для уровня 3 - определенное число месяца, переданное в параметрах скрипта или каталога базы данных
+Function Level3Condition {
+  Param( [Parameter(Mandatory=$True,ValueFromPipeline=$True)] [Object] $File )
+  $FileDate = Get-FileDate ( $File )
+  If ( $FileDate ) { 
+    #Return ( [int]$FileDay -eq $script:Level3Day )
+    If ( [int]$FileDate.Day -eq $script:Level3Day ) {
+      Write-Log ( 'Info: File "' + $File.Name + '" matches the condition of level 3')
+      Return $True
+    } Else {
+      Write-Log ( 'Info: File "' + $File.Name + '" does not match the condition of level 3')
+      Return $False
+    }
+  } Else {
+    Return $False
+  }
+}
+
+##
+##
+## MAIN PROCEDURE
+##
+$ErrorActionPreference = "Stop"
+#$VerbosePreference = "continue"
+#$ErrorActionPreference = "SilentlyContinue"
+
+$DateFormat = 'yyyy.MM.dd'
+$DateMask = '\d{4}.\d\d.\d\d'
+#$DateFormat = 'yyyyMMdd'
+#$DateMask = '\d{8}'
+
+
+# Проверим путь локального хранилища - если он доступен, будем писать туда лог
+# 
+Try {
+  $LocalStorage = Get-Item -Path $LocalStoragePath
+  If ( ! $LocalStorage.PSISContainer ) {
+    Write-Host ("Error: Local storage is not a directory!")
+    Exit-WithCode 1
+  }
+}
+Catch {
+  Write-Host ("Error: Local storage directory not found or no access!")
+  Write-Host ("Error: " + $Error[0].ToString())
+  Exit-WithCode 2
+}
+Write-Log ''
+Write-Log ('Info: Starting ' + (Get-Date -Format "yyyy.MM.dd HH:mm") )
+#Write-Log ('Info: Processing local storage "' + $LocalStorage.FullName + '"')
+
+# Manipulating parameters
+#Write-Log ('Info: Parameters given:')
+#Write-Log ('Info: Database name:       '+ $DatabaseName )
+#Write-Log ('Info: Remote storage path: '+ $RemoteStoragePath )
+#Write-Log ('Info: Job start date:      '+ $JobStartDate )
+#Write-Log ('Info: Computer name:       '+ $ComputerName )
+#Write-Log ('Info: Local storage path:  '+ $LocalStorage.FullName )
+#Write-Log ('Info: Level 1 copies:      '+ [int]$Level1Copies )
+#Write-Log ('Info: Level 2 copies:      '+ [int]$Level2Copies )
+#Write-Log ('Info: Level 3 copies:      '+ [int]$Level3Copies )
+
+# Проверим обязательные параметры
+$ParametersError = $false
+If ( ! $DatabaseName ) { Write-Log 'Error: No database name given!'; $ParametersError = $true }
+If ( ! $RemoteStoragePath ) { Write-Log 'Error: No remote storage path given!'; $ParametersError = $true }
+If ( ! $JobStartDate ) { Write-Log 'Error: No job start date given!'; $ParametersError = $true }
+# SQL Server передаст Job Start Date всегда в одном формате (yyyyMMdd без разделителей)
+If ( $JobStartDate -notmatch '\A\d{8}\z' )  { Write-Log 'Error: Job start date must be a 8-digits string!'; $ParametersError = $true }
+If ( ! $ComputerName ) { Write-Log 'Error: No computer name given!'; $ParametersError = $true }
+If ( $ParametersError ) {
+  Write-Log 'Usage: Get-Help <this script filename>'
+  Exit-WithCode 4
+}
+
+# Проверим каталог базы данных, при отсутствии - создадим его
+Try {
+  $DatabaseDirectory = $LocalStorage.CreateSubdirectory($DatabaseName)
+  $DatabaseDirectoryName = $DatabaseDirectory.FullName.ToString()
+  Write-Log ('Info: Processing local directory "' + $DatabaseDirectoryName + '"')
+}
+Catch {
+  Write-Log ("Error: Cannot get or create database subdirectory!")
+  Write-Log ("Error: " + $Error[0].ToString())
+  Exit-WithCode 5
+}
+
+# Проверим хранилище с оперативным бэкапом и поищем там файл
+Try {
+  #$RemoteBackupDirectory = Get-Item -Path ((Get-Item -Path $RemoteStoragePath).ToString() + '\' + $DatabaseName )
+  $RemoteBackupDirectory = ( $RemoteStoragePath | Get-ChildItem -Filter $DatabaseName -Directory)
+  $RemoteBackupPath = $RemoteBackupDirectory.FullName.ToString()
+  Write-Log ('Info: Processing remote directory "' + $RemoteBackupPath + '"')
+}
+Catch {
+  Write-Log ("Error: Cannot get remote backup directory!")
+  Write-Log ("Error: " + $Error[0].ToString())
+  Exit-WithCode 6
+}
+
+If ( ! $RemoteBackupDirectory.PSISContainer ) {
+  Write-Log ("Error: Cannot remote backup path is not a directory!")
+  Exit-WithCode 7
+}
+
+# Пока работаем с одним файлом - с тем, дату которого нам передали в параметрах
+# Возможно, позже вынесу это в функцию, чтобы обрабатывать несколько файлов
+# на случай, если предыдущая операция копирования не удалась, и в каталоге 
+# оперативного бэкапа осталось больше одного файла
+#
+Try {
+  $FileDate = Get-Date 
+  If ( $FileDate::TryParseExact( $JobStartDate, 'yyyyMMdd', [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::None, [ref] $FileDate ) ) {
+    $FileDateString = $FileDate.ToString( $DateFormat )
+    $FileDayOfWeek = [int]$FileDate.DayOfWeek # 0-Sunday ... 6-Saturday
+    $FileYear = [int]$FileDate.Year
+    $FileMonth = [int]$FileDate.Month
+    $FileDay = [int]$FileDate.Day
+    #Write-Log ( "Info: Got date parts from JobStartDate - Year $FileYear, Month $FileMonth, Day $FileDay, DoW $FileDayOfWeek")
+  } Else {
+    Write-Log ( 'Error: Cannot get backup date from JobStartDate parameter!' )
+    Exit-WithCode 8
+  }
+} Catch {
+  Write-Log ( 'Error: Cannot get backup date from JobStartDate parameter!' )
+    Write-Log ("Error: " + $Error[0].ToString())
+    Exit-WithCode 8
+}
+
+
+Try {
+  $RemoteBackupFileName = $DatabaseName + '_' + $FileDateString + '.bak'
+  $RemoteBackupFile = ( $RemoteBackupDirectory | Get-ChildItem -Filter $RemoteBackupFileName -File)
+  If ( -Not $RemoteBackupFile ) {
+    Write-Log ( 'Error: Cannot find remote backup file or no access!' )
+    Exit-WithCode 9
+  }
+  # Получим имя файла с точностью до регистра символов и заодно проверим, найден ли файл (если не найден, у нас тут NULL и мы вылетим в Catch)
+  $RemoteBackupFileName = $RemoteBackupFile.Name.ToString()
+  Write-Log ( 'Info: Processing remote backup file "' + $RemoteBackupFile.FullName + '"' )
+}
+Catch {
+  Write-Log ( 'Error: Cannot find remote backup file or no access!' )
+  Write-Log ( 'Error: ' + $Error[0].ToString() )
+  Exit-WithCode 9
+}
+
+### Разберем дату архива вычислим год, месяц, день и день недели этой даты
+##$FileDate = Get-Date
+###[DateTime]::TryParseExact( $StartDate, $DateFormat, [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::None, [ref] $FileDate )
+##If ( $FileDate::TryParseExact( $JobStartDate, $DateFormat, [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::None, [ref] $FileDate ) ) {
+
+# Работа с параметрами базы данных (глубина хранения, названия папок и дни перехода с уровня на уровень)
+# Параметры хранения копий могут быть прочитаны из файла, могут быть получены в параметрах скрипта.
+# Мы должны иметь возможность переопределить параметрами запуска те значения, которые хранятся в файле
+# Но у нас есть еще и параметры по умолчанию, так что при старте скрипта параметры всегдя имеют значение
+# Думаю, лучшим способом будет использовать параметры из файла, а параметры командной строки
+# применять только при наличии отдельного ключа, например, -Override,
+# и отдельный ключ для сохранения новых параметров в файл, например, -SaveSettings
+  
+$SettingsFileName = $DatabaseDirectoryName+'\.settings.json'
+$DirectorySettings = Get-Content $SettingsFileName -ErrorAction SilentlyContinue | ConvertFrom-Json
+
+If ( $DirectorySettings ) {
+  If ( ! $Override ) {
+    If ( $DirectorySettings.Level1Copies ) { $Level1Copies = [Int]$DirectorySettings.Level1Copies }
+    If ( $DirectorySettings.Level1FolderName ) { $Level1FolderName = [String]$DirectorySettings.Level1FolderName }
+    If ( $DirectorySettings.Level2Copies ) { $Level2Copies = [Int]$DirectorySettings.Level2Copies }
+    If ( $DirectorySettings.Level2FolderName ) { $Level2FolderName = [String]$DirectorySettings.Level2FolderName }
+    If ( $DirectorySettings.Level2Match ) { $Level2Match = [String]$DirectorySettings.Level2Match }
+    If ( $DirectorySettings.Level2Days ) { $Level2Days = [String]$DirectorySettings.Level2Days }
+    If ( $DirectorySettings.Level3Copies ) { $Level3Copies = [Int]$DirectorySettings.Level3Copies }
+    If ( $DirectorySettings.Level3FolderName ) { $Level3FolderName = [String]$DirectorySettings.Level3FolderName }
+    If ( $DirectorySettings.Level3Day ) { $Level3Day = [Int]$DirectorySettings.Level3Day }
+  }
+}
+
+If ( $SaveSettings ) {
+  If ( $Override ) {
+    #If ( $Level2Match -match "\ADays\z" ) { $SaveL2Days = ( $Level2Days -join ',' ) } else { $SaveL2Days = [string]$Level2Days }
+    $DirectorySettings = "{`"Level1Copies`":$Level1Copies,`"Level2Copies`":$Level2Copies,`"Level3Copies`":$Level3Copies,`"Level1FolderName`":`"$Level1FolderName`",`"Level2FolderName`":`"$Level2FolderName`",`"Level3FolderName`":`"$Level3FolderName`",`"Level2Match`":`"$Level2Match`",`"Level2Days`":`"$Level2Days`",`"Level3Day`":$Level3Day}"|ConvertFrom-Json
+    $DirectorySettings | ConvertTo-JSON | Out-File -Encoding "UTF8" $SettingsFileName
+  } Else {
+    Write-Log ("Warning: Cannot save settings without -Override switch!")
+  }
+}
+
+#Write-Log ('Info: Database settings used:')
+#Write-Log ('Info: Level 1 copies:      ' + $Level1Copies + ', directory name: ' + $Level1FolderName )
+#Write-Log ('Info: Level 2 copies:      ' + $Level2Copies + ', directory name: ' + $Level2FolderName + ', match: ' + $Level2Match + ', days: ' + $Level2Days )
+#Write-Log ('Info: Level 3 copies:      ' + $Level3Copies + ', directory name: ' + $Level3FolderName + ', day: ' + $Level3Day )
+
+# Копируем файл в корень папки
+Write-Log ('Info: Copying file from remote to local storage')
+Try {
+  $RemoteBackupFile | Copy-Item -Destination $DatabaseDirectory -Force #-Verbose
+}
+Catch {
+  Write-Log ("Error: Cannot copy file!")
+  Write-Log ("Error: " + $Error[0].ToString())
+  Exit-WithCode 10
+}
+
+$BackupFileMask = '\A' + $DatabaseName + '_' + $DateMask + '.bak\z'
+
+# Проверим каталог первого уровня
+Try {
+  $Level1Directory = $DatabaseDirectory.CreateSubdirectory($Level1FolderName)
+  #Write-Log ('Info: Processing level 1 directory "' + $Level1Directory.ToString() + '"')
+}
+Catch {
+  Write-Log ("Error: Cannot find level 1 directory!")
+  Write-Log ("Error: " + $Error[0].ToString())
+  Exit-WithCode 11
+}
+# Проверим каталог второго уровня
+Try {
+  $Level2Directory = $DatabaseDirectory.CreateSubdirectory($Level2FolderName)
+  #Write-Log ('Info: Processing level 2 directory "' + $Level2Directory.ToString() + '"')
+}
+Catch {
+  Write-Log ("Error: Cannot find level 2 directory!")
+  Write-Log ("Error: " + $Error[0].ToString())
+  Exit-WithCode 12
+}
+# Проверим каталог третьего уровня
+Try {
+  $Level3Directory = $DatabaseDirectory.CreateSubdirectory($Level3FolderName)
+  #Write-Log ('Info: Processing level 3 directory "' + $Level3Directory.ToString() + '"')
+}
+Catch {
+  Write-Log ("Error: Cannot find level 3 directory!")
+  Write-Log ("Error: " + $Error[0].ToString())
+  Exit-WithCode 13
+}
+
+# Переместим лишние файлы в уровень 1, оставляя только один, самый новый (формат даты должен сортироваться по имени правильно)
+# Ключ -Filter поддерживает только знаки подстановки "*" и "?", если хотим более точного совпадения, придется перебирать по одному, проверяя имя по регулярному выражению
+#$L0Files = Get-ChildItem -Path $DatabaseDirectory -Filter $BackupFileMask | Sort-Object -Property 'Name' | Select-Object -SkipLast 1
+$L0Files = Get-ChildItem -Path $DatabaseDirectory | Where-Object { $_.Name -Match $BackupFileMask } | Sort-Object -Property 'Name' | Select-Object -SkipLast 1
+#$L0Files | Select-Object -Property 'FullName'
+#$L0Files | Move-Item -Destination $Level1Directory
+$L0Files | Foreach-Object {
+  Try {
+    $_ | Move-Item -Destination $Level1Directory -Force
+    Write-Log ('Info: File "' + $_.FullName + '" moved to directory "' + $Level1Directory.FullName + '"')
+  } Catch {
+    Write-Log ("Error: Cannot move files to level 1 directory!")
+    Write-Log ("Error: " + $Error[0].ToString())
+    Exit-WithCode 14
+  }
+}
+
+$L2Changed = $False
+$L3Changed = $False
+
+# Переместим файлы из уровеня 1 в уровень 2, если они соответствуют условию для уровня 2 ( день недели совпадает с заданным для данного каталога )
+# Если файл не соответствует условию уровня 2, но соответствует условию уровня 3, сразу переместим его в уровень 3
+$L1Files = Get-ChildItem -Path $Level1Directory | Where-Object { $_.Name -Match $BackupFileMask } | Sort-Object -Property 'Name' | Select-Object -SkipLast $Level1Copies
+#$L1Files | Foreach-Object { $_.FullName | Write-Log }
+$L1Files | Foreach-Object {
+  If ( Level2Condition $_ ) {
+    Try {
+      $_ | Move-Item -Destination $Level2Directory -Force
+      Write-Log ('Info: File "' + $_.FullName + '" moved to directory "' + $Level2Directory.FullName + '"')
+      $L2Changed = $True
+    } Catch {
+      Write-Log ("Error: Cannot move files to level 2 directory!")
+      Write-Log ("Error: " + $Error[0].ToString())
+      Exit-WithCode 15
+    }
+  } ElseIf ( Level3Condition $_ ) {
+    Try {
+      $_ | Move-Item -Destination $Level3Directory -Force
+      Write-Log ('Info: File "' + $_.FullName + '" moved to directory "' + $Level3Directory.FullName + '"')
+      $L3Changed = $True
+    } Catch {
+      Write-Log ("Error: Cannot move files to level 3 directory!")
+      Write-Log ("Error: " + $Error[0].ToString())
+      Exit-WithCode 16
+    }
+  } Else {
+    Try {
+      $_ | Remove-Item -Force
+      Write-Log ('Info: File "' + $_.FullName + '" deleted from "' + $Level1Directory.FullName + '"')
+    } Catch {
+      Write-Log ("Error: Cannot delete file from level 1 directory!")
+      Write-Log ("Error: " + $Error[0].ToString())
+      Exit-WithCode 17
+    }
+  }
+}
+
+# Переместим файлы из уровеня 2 в уровень 3, если они соответствуют условию для уровня 3 ( день совпадает с заданным для данного каталога )
+If ( $L2Changed ) {
+  $L2Files = Get-ChildItem -Path $Level2Directory | Where-Object { $_.Name -Match $BackupFileMask } | Sort-Object -Property 'Name' | Select-Object -SkipLast $Level2Copies
+  #$L2Files | Foreach-Object { $_.FullName | Write-Log }
+  $L2Files | Foreach-Object {
+    If ( Level3Condition $_  ) {
+      Try {
+        $_ | Move-Item -Destination $Level3Directory -Force
+        Write-Log ('Info: File "' + $_.FullName + '" moved to directory "' + $Level3Directory.FullName + '"')
+        $L3Changed = $True
+      } Catch {
+        Write-Log ("Error: Cannot move files to level 3 directory!")
+        Write-Log ("Error: " + $Error[0].ToString())
+        Exit-WithCode 18
+      }
+    } Else {
+      Try {
+        $_ | Remove-Item -Force
+        Write-Log ('Info: File "' + $_.FullName + '" deleted from "' + $Level2Directory.FullName + '"')
+      } Catch {
+        Write-Log ("Error: Cannot delete file from level 2 directory!")
+        Write-Log ("Error: " + $Error[0].ToString())
+        Exit-WithCode 19
+      }
+    }
+  }
+}
+
+# Удалим файлы из уровеня 3 (оставив заданное количество для данного каталога )
+If ( $L3Changed ) {
+  $L3Files = Get-ChildItem -Path $Level3Directory | Where-Object { $_.Name -Match $BackupFileMask } | Sort-Object -Property 'Name' | Select-Object -SkipLast $Level3Copies
+  $L3Files | Foreach-Object {
+    Try {
+      $_ | Remove-Item -Force
+      Write-Log ('Info: File "' + $_.FullName + '" deleted from "' + $Level3Directory.FullName + '"')
+    } Catch {
+      Write-Log ("Error: Cannot delete file from level 3 directory!")
+      Write-Log ("Error: " + $Error[0].ToString())
+      Exit-WithCode 20
+    }
+  }
+}
+
+# Удалим все файлы, кроме последнего, из каталога оперативного бэкапа.
+# Если мы сюда добрались, значит, все операции с долговременным хранилищем завершились успешно, можно чистить.
+## Вариант 1 - выбираем ВСЕ файлы, соответствующие маске, отсортированные по имени, кроме последнего. Если ничего не напутано с именами, мы оставим ровно текущий бэкап.
+#$RemoteBackupFiles = ( $RemoteBackupDirectory | Get-ChildItem -File | Where-Object { $_.Name -Match $BackupFileMask } | Sort-Object -Property 'Name' | Select-Object -SkipLast 1 )
+# Вариант 2 - выбираем ВСЕ файлы, соответствующие маске, кроме файла, который мы изначально копировали из оперативного хранилища в долговременное
+# В этом случае сортировка нам не нужна.
+$RemoteBackupFiles = ( $RemoteBackupDirectory | Get-ChildItem -File | Where-Object { $_.Name -Match $BackupFileMask } | Where-Object { $_.Name -NotMatch $RemoteBackupFileName } )
+# Выбран Вариант 2
+$RemoteBackupFiles | Foreach-Object {
+  Try {
+    $_ | Remove-Item -Force
+    Write-Log ('Info: File "' + $_.FullName + '" deleted from "' + $RemoteBackupDirectory.FullName + '"')
+  } Catch {
+    Write-Log ("Error: Cannot delete file from remote backup storage!")
+    Write-Log ("Error: " + $Error[0].ToString())
+    Exit-WithCode 21
+  }
+}
+
+Write-Log ('Info: Copy backup operation complete ' + (Get-Date -Format "yyyy.MM.dd HH:mm") )
+Exit-WithCode 0
