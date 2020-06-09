@@ -67,7 +67,7 @@ Param(
   ,[Parameter(Mandatory=$False)] [int]$Level1Copies = 10
   ,[Parameter(Mandatory=$False)] [int]$Level2Copies = 5
   ,[Parameter(Mandatory=$False)] [int]$Level3Copies = 10
-  ,[Parameter(Mandatory=$False)] [string]$LocalStoragePath = "E:\BACKUP"
+  ,[Parameter(Mandatory=$False)] [string]$LocalStoragePath = "E:\SQLBACKUP"
   ,[Parameter(Mandatory=$False)] [switch]$Override = $false
   ,[Parameter(Mandatory=$False)] [switch]$SaveSettings = $false
   ,[Parameter(Mandatory=$False)] [string]$Level1FolderName = '__day'
@@ -104,9 +104,34 @@ Function Write-Log {
   }
 }
 
-Function Process-OneFile ( $Dir ) {
+Function Get-EndpointByDNS {
+  Param(
+  #  [Parameter(Mandatory=$True,Position=1)]
+    [Parameter(Position=1,Mandatory=$True)] [string]$NameToResolve
+  )
 
-  Return $True # File processed succesfully
+$NameToResolve
+  Try {
+    #$AddressList = Resolve-DnsName -Name $NameToResolve
+    $AddressList = ( Resolve-DnsName -Name $NameToResolve | Where-Object { $_.Type -in ('A','AAAA') } )
+  } Catch {
+    $AddressList = @()
+  }
+  If ( $AddressList.Count -eq 0 ) { Return $False }
+
+  $NamesList = @()
+  $AddressList | Foreach-Object { 
+    Try {
+      Resolve-DnsName -Name $_.IPAddress -Type 'PTR' | Where-Object { $_.Type -in ('PTR') } | Foreach-Object { $NamesList += $_.NameHost }
+    } Catch {
+      $NamesList = @()
+    }
+  }
+  If ( $NamesList.Count -eq 0 ) {
+    Return $False
+  } Else {
+    Return $NamesList[0]
+  }
 }
 
 Function Get-FileDate {
@@ -138,9 +163,11 @@ Function Level2Condition {
   If ( $FileDate ) {
     If ( $script:Level2Match -match "\ADays\z" ) {
       Try { $L2Days = ( $script:Level2Days -split ',' ) } Catch { Write-Log 'Warning: Level 2 days is empty of misformatted!'; $L2Days = @() }
-      $Match = ( $L2Days -contains $FileDate.Day )
+      Return ( $L2Days -contains $FileDate.Day )
+      #$Match = ( $L2Days -contains $FileDate.Day )
     } ElseIf ( $script:Level2Match -match "\ADayOfWeek\z" ) {
-      $Match = ( [int]$FileDate.DayOfWeek -eq $script:Level2Days )
+      Return ( [int]$FileDate.DayOfWeek -eq $script:Level2Days )
+      #$Match = ( [int]$FileDate.DayOfWeek -eq $script:Level2Days )
     } Else {
       Write-Log ( 'Warning: Unknown level 2 condition type given!')
     }
@@ -158,14 +185,14 @@ Function Level3Condition {
   Param( [Parameter(Mandatory=$True,ValueFromPipeline=$True)] [Object] $File )
   $FileDate = Get-FileDate ( $File )
   If ( $FileDate ) { 
-    #Return ( [int]$FileDay -eq $script:Level3Day )
-    If ( [int]$FileDate.Day -eq $script:Level3Day ) {
-      Write-Log ( 'Info: File "' + $File.Name + '" matches the condition of level 3')
-      Return $True
-    } Else {
-      Write-Log ( 'Info: File "' + $File.Name + '" does not match the condition of level 3')
-      Return $False
-    }
+    Return ( $FileDate.Day -eq $script:Level3Day )
+    #If ( $FileDate.Day -eq $script:Level3Day ) {
+    #  Write-Log ( 'Info: File "' + $File.Name + '" matches the condition of level 3')
+    #  Return $True
+    #} Else {
+    #  Write-Log ( 'Info: File "' + $File.Name + '" does not match the condition of level 3')
+    #  Return $False
+    #}
   } Else {
     Return $False
   }
@@ -221,7 +248,7 @@ If ( ! $RemoteStoragePath ) { Write-Log 'Error: No remote storage path given!'; 
 If ( ! $JobStartDate ) { Write-Log 'Error: No job start date given!'; $ParametersError = $true }
 # SQL Server передаст Job Start Date всегда в одном формате (yyyyMMdd без разделителей)
 If ( $JobStartDate -notmatch '\A\d{8}\z' )  { Write-Log 'Error: Job start date must be a 8-digits string!'; $ParametersError = $true }
-If ( ! $ComputerName ) { Write-Log 'Error: No computer name given!'; $ParametersError = $true }
+#If ( ! $ComputerName ) { Write-Log 'Error: No computer name given!'; $ParametersError = $true }
 If ( $ParametersError ) {
   Write-Log 'Usage: Get-Help <this script filename>'
   Exit-WithCode 4
@@ -357,125 +384,114 @@ Catch {
 
 $BackupFileMask = '\A' + $DatabaseName + '_' + $DateMask + '.bak\z'
 
-# Проверим каталог первого уровня
-Try {
-  $Level1Directory = $DatabaseDirectory.CreateSubdirectory($Level1FolderName)
-  #Write-Log ('Info: Processing level 1 directory "' + $Level1Directory.ToString() + '"')
-}
-Catch {
-  Write-Log ("Error: Cannot find level 1 directory!")
-  Write-Log ("Error: " + $Error[0].ToString())
-  Exit-WithCode 11
-}
-# Проверим каталог второго уровня
-Try {
-  $Level2Directory = $DatabaseDirectory.CreateSubdirectory($Level2FolderName)
-  #Write-Log ('Info: Processing level 2 directory "' + $Level2Directory.ToString() + '"')
-}
-Catch {
-  Write-Log ("Error: Cannot find level 2 directory!")
-  Write-Log ("Error: " + $Error[0].ToString())
-  Exit-WithCode 12
-}
-# Проверим каталог третьего уровня
-Try {
-  $Level3Directory = $DatabaseDirectory.CreateSubdirectory($Level3FolderName)
-  #Write-Log ('Info: Processing level 3 directory "' + $Level3Directory.ToString() + '"')
-}
-Catch {
-  Write-Log ("Error: Cannot find level 3 directory!")
-  Write-Log ("Error: " + $Error[0].ToString())
-  Exit-WithCode 13
-}
+# Для универсальности пришлось оставить процедуры перемещения даже в случае нулевого количества копий
+# Возможна ситуация, когда хранилось определенное количество копий, а мы хотим его уменьшить, для этого нам в любом случае нужно пробежать
+# по каталогам всех уровней и проверить количество файлов в них, лишние сразу удалить
 
 # Переместим лишние файлы в уровень 1, оставляя только один, самый новый (формат даты должен сортироваться по имени правильно)
+# Перемещаем файл только в том случае, если количество хранимых копий больше нуля
 # Ключ -Filter поддерживает только знаки подстановки "*" и "?", если хотим более точного совпадения, придется перебирать по одному, проверяя имя по регулярному выражению
-#$L0Files = Get-ChildItem -Path $DatabaseDirectory -Filter $BackupFileMask | Sort-Object -Property 'Name' | Select-Object -SkipLast 1
-$L0Files = Get-ChildItem -Path $DatabaseDirectory | Where-Object { $_.Name -Match $BackupFileMask } | Sort-Object -Property 'Name' | Select-Object -SkipLast 1
-#$L0Files | Select-Object -Property 'FullName'
-#$L0Files | Move-Item -Destination $Level1Directory
-$L0Files | Foreach-Object {
-  Try {
-    $_ | Move-Item -Destination $Level1Directory -Force
-    Write-Log ('Info: File "' + $_.FullName + '" moved to directory "' + $Level1Directory.FullName + '"')
-  } Catch {
-    Write-Log ("Error: Cannot move files to level 1 directory!")
-    Write-Log ("Error: " + $Error[0].ToString())
-    Exit-WithCode 14
+#$L0Files = Get-ChildItem -Path $DatabaseDirectory -File -Filter $BackupFileMask | Sort-Object -Property 'Name' | Select-Object -SkipLast 1
+$ProcessedFiles = $DatabaseDirectory | Get-ChildItem -File | Where-Object { $_.Name -Match $BackupFileMask } | Sort-Object -Property 'Name' | Select-Object -SkipLast 1
+#$ProcessedFiles | Select-Object -Property 'FullName'
+#$ProcessedFiles | Move-Item -Destination $Level1Directory
+If ( $Level1Copies -gt 0 ) {
+  # Проверим каталог первого уровня
+  Try { $Level1Directory = $DatabaseDirectory.CreateSubdirectory($Level1FolderName)
+    Write-Log ('Info: Processing level 1 directory "' + $Level1Directory.ToString() + '"')
+  } Catch { Write-Log ("Error: Cannot create level 1 directory!"); Write-Log ("Error: " + $Error[0].ToString()); Exit-WithCode 11 }
+  $ProcessedFiles | Foreach-Object {
+    Try { 
+      $_ | Move-Item -Destination $Level1Directory -Force
+      Write-Log ('Info: File "' + $_.FullName + '" moved to directory "' + $Level1Directory.FullName + '"')
+    } Catch {
+      Write-Log ("Error: Cannot move files to level 1 directory!")
+      Write-Log ("Error: " + $Error[0].ToString())
+      Exit-WithCode 14
+    }
   }
+} Else {
+  # Если каталог уровня 1 существует, запомним его
+  $Level1Directory = $DatabaseDirectory | Get-ChildItem -Directory -Filter $Level1FolderName -ErrorAction SilentlyContinue
 }
 
-$L2Changed = $False
-$L3Changed = $False
-
 # Переместим файлы из уровеня 1 в уровень 2, если они соответствуют условию для уровня 2 ( день недели совпадает с заданным для данного каталога )
+# Если первый уровень не храним, вместо первого уровня работаем с нулевым уровнем
 # Если файл не соответствует условию уровня 2, но соответствует условию уровня 3, сразу переместим его в уровень 3
-$L1Files = Get-ChildItem -Path $Level1Directory | Where-Object { $_.Name -Match $BackupFileMask } | Sort-Object -Property 'Name' | Select-Object -SkipLast $Level1Copies
-#$L1Files | Foreach-Object { $_.FullName | Write-Log }
-$L1Files | Foreach-Object {
-  If ( Level2Condition $_ ) {
-    Try {
-      $_ | Move-Item -Destination $Level2Directory -Force
-      Write-Log ('Info: File "' + $_.FullName + '" moved to directory "' + $Level2Directory.FullName + '"')
-      $L2Changed = $True
-    } Catch {
-      Write-Log ("Error: Cannot move files to level 2 directory!")
-      Write-Log ("Error: " + $Error[0].ToString())
-      Exit-WithCode 15
-    }
-  } ElseIf ( Level3Condition $_ ) {
-    Try {
-      $_ | Move-Item -Destination $Level3Directory -Force
-      Write-Log ('Info: File "' + $_.FullName + '" moved to directory "' + $Level3Directory.FullName + '"')
-      $L3Changed = $True
-    } Catch {
-      Write-Log ("Error: Cannot move files to level 3 directory!")
-      Write-Log ("Error: " + $Error[0].ToString())
-      Exit-WithCode 16
-    }
-  } Else {
-    Try {
-      $_ | Remove-Item -Force
-      Write-Log ('Info: File "' + $_.FullName + '" deleted from "' + $Level1Directory.FullName + '"')
-    } Catch {
-      Write-Log ("Error: Cannot delete file from level 1 directory!")
-      Write-Log ("Error: " + $Error[0].ToString())
-      Exit-WithCode 17
+If ( $Level1Directory ) {
+  $ProcessedFiles = $Level1Directory | Get-ChildItem -File | Where-Object { $_.Name -Match $BackupFileMask } | Sort-Object -Property 'Name' | Select-Object -SkipLast $Level1Copies
+}
+If ( $Level2Copies -gt 0 ) {
+  # Проверим каталог второго уровня.
+  Try { $Level2Directory = $DatabaseDirectory.CreateSubdirectory($Level2FolderName)
+    Write-Log ('Info: Processing level 2 directory "' + $Level2Directory.ToString() + '"')
+  } Catch { Write-Log ("Error: Cannot create level 2 directory!"); Write-Log ("Error: " + $Error[0].ToString()); Exit-WithCode 12 }
+  #$ProcessedFiles | Foreach-Object { $_.FullName | Write-Log }
+  $ProcessedFiles | Foreach-Object {
+    If ( Level2Condition $_ ) {
+      Try {
+        $_ | Move-Item -Destination $Level2Directory -Force
+        Write-Log ('Info: File "' + $_.FullName + '" moved to directory "' + $Level2Directory.FullName + '"')
+      } Catch {
+        Write-Log ("Error: Cannot move files to level 2 directory!")
+        Write-Log ("Error: " + $Error[0].ToString())
+        Exit-WithCode 15
+      }
     }
   }
+} Else {
+  # Если каталог уровня 2 существует, запомним его
+  $Level2Directory = $DatabaseDirectory | Get-ChildItem -Directory -Filter $Level2FolderName -ErrorAction SilentlyContinue
 }
 
 # Переместим файлы из уровеня 2 в уровень 3, если они соответствуют условию для уровня 3 ( день совпадает с заданным для данного каталога )
-If ( $L2Changed ) {
-  $L2Files = Get-ChildItem -Path $Level2Directory | Where-Object { $_.Name -Match $BackupFileMask } | Sort-Object -Property 'Name' | Select-Object -SkipLast $Level2Copies
-  #$L2Files | Foreach-Object { $_.FullName | Write-Log }
-  $L2Files | Foreach-Object {
+If ( $Level2Directory ) {
+  $ProcessedFiles = $Level2Directory | Get-ChildItem -File | Where-Object { $_.Name -Match $BackupFileMask } | Sort-Object -Property 'Name' | Select-Object -SkipLast $Level2Copies
+}
+If ( $Level3Copies -gt 0 ) {
+  # Проверим каталог третьего уровня
+  Try { $Level3Directory = $DatabaseDirectory.CreateSubdirectory($Level3FolderName)
+    Write-Log ('Info: Processing level 3 directory "' + $Level3Directory.ToString() + '"')
+  } Catch { Write-Log ("Error: Cannot create level 3 directory!"); Write-Log ("Error: " + $Error[0].ToString()); Exit-WithCode 13 }
+
+  #$ProcessedFiles | Foreach-Object { $_.FullName | Write-Log }
+  $ProcessedFiles | Foreach-Object {
     If ( Level3Condition $_  ) {
       Try {
         $_ | Move-Item -Destination $Level3Directory -Force
         Write-Log ('Info: File "' + $_.FullName + '" moved to directory "' + $Level3Directory.FullName + '"')
-        $L3Changed = $True
       } Catch {
         Write-Log ("Error: Cannot move files to level 3 directory!")
         Write-Log ("Error: " + $Error[0].ToString())
-        Exit-WithCode 18
-      }
-    } Else {
-      Try {
-        $_ | Remove-Item -Force
-        Write-Log ('Info: File "' + $_.FullName + '" deleted from "' + $Level2Directory.FullName + '"')
-      } Catch {
-        Write-Log ("Error: Cannot delete file from level 2 directory!")
-        Write-Log ("Error: " + $Error[0].ToString())
-        Exit-WithCode 19
+        Exit-WithCode 16
       }
     }
   }
+  # На всякий случай еще раз проверим каталог первого (или нулевого) уровня
+  # В нем могут остаться файлы, попадающие под условие уровня 3, но не попадающие под условие уровня 2
+  If ( $L1Directory ) { $ProcessedFiles = $Level1Directory | Get-ChildItem -File | Where-Object { $_.Name -Match $BackupFileMask } | Sort-Object -Property 'Name' | Select-Object -SkipLast $Level1Copies }
+  Else { $ProcessedFiles = $DatabaseDirectory | Get-ChildItem -File | Where-Object { $_.Name -Match $BackupFileMask } | Sort-Object -Property 'Name' | Select-Object -SkipLast 1 }
+  $ProcessedFiles | Foreach-Object {
+    If ( Level3Condition $_  ) {
+      Try {
+        $_ | Move-Item -Destination $Level3Directory -Force
+        Write-Log ('Info: File "' + $_.FullName + '" moved to directory "' + $Level3Directory.FullName + '"')
+      } Catch {
+        Write-Log ("Error: Cannot move files to level 3 directory!")
+        Write-Log ("Error: " + $Error[0].ToString())
+        Exit-WithCode 16
+      }
+    }
+  }
+} Else {
+  # Если каталог уровня 3 существует, запомним его
+  $Level3Directory = $DatabaseDirectory | Get-ChildItem  -Directory -Filter $Level3FolderName -ErrorAction SilentlyContinue
 }
 
-# Удалим файлы из уровеня 3 (оставив заданное количество для данного каталога )
-If ( $L3Changed ) {
-  $L3Files = Get-ChildItem -Path $Level3Directory | Where-Object { $_.Name -Match $BackupFileMask } | Sort-Object -Property 'Name' | Select-Object -SkipLast $Level3Copies
+# Удалим файлы из уровня 3 (оставив заданное количество для данного каталога )
+# Изменения каталогов тут не проверяем, так как мы могли параметрами уменьшить глубину хранения
+If ( $Level3Directory ) {
+  $L3Files = $Level3Directory | Get-ChildItem -File | Where-Object { $_.Name -Match $BackupFileMask } | Sort-Object -Property 'Name' | Select-Object -SkipLast $Level3Copies
   $L3Files | Foreach-Object {
     Try {
       $_ | Remove-Item -Force
@@ -483,8 +499,57 @@ If ( $L3Changed ) {
     } Catch {
       Write-Log ("Error: Cannot delete file from level 3 directory!")
       Write-Log ("Error: " + $Error[0].ToString())
-      Exit-WithCode 20
+      Exit-WithCode 17
     }
+  }
+  # Удалим каталог, если он пуст
+  If ( ($Level3Directory|Get-ChildItem).Count -eq 0 ) { $Level3Directory | Remove-Item -ErrorAction SilentlyContinue}
+}
+# Удалим файлы из уровня 2 (оставив заданное количество для данного каталога )
+# Изменения каталогов тут не проверяем, так как мы могли параметрами уменьшить глубину хранения
+If ( $Level2Directory ) {
+  $L2Files = $Level2Directory | Get-ChildItem -File | Where-Object { $_.Name -Match $BackupFileMask } | Sort-Object -Property 'Name' | Select-Object -SkipLast $Level2Copies
+  $L2Files | Foreach-Object {
+    Try {
+      $_ | Remove-Item -Force
+      Write-Log ('Info: File "' + $_.FullName + '" deleted from "' + $Level2Directory.FullName + '"')
+    } Catch {
+      Write-Log ("Error: Cannot delete file from level 2 directory!")
+      Write-Log ("Error: " + $Error[0].ToString())
+      Exit-WithCode 18
+    }
+  }
+  # Удалим каталог, если он пуст
+  If ( ($Level2Directory|Get-ChildItem).Count -eq 0 ) { $Level2Directory | Remove-Item -ErrorAction SilentlyContinue }
+}
+# Удалим файлы из уровня 1 (оставив заданное количество для данного каталога )
+# Изменения каталогов тут не проверяем, так как мы могли параметрами уменьшить глубину хранения
+If ( $Level1Directory ) {
+  $L1Files = $Level1Directory | Get-ChildItem -File | Where-Object { $_.Name -Match $BackupFileMask } | Sort-Object -Property 'Name' | Select-Object -SkipLast $Level1Copies
+  $L1Files | Foreach-Object {
+    Try {
+      $_ | Remove-Item -Force
+      Write-Log ('Info: File "' + $_.FullName + '" deleted from "' + $Level1Directory.FullName + '"')
+    } Catch {
+      Write-Log ("Error: Cannot delete file from level 1 directory!")
+      Write-Log ("Error: " + $Error[0].ToString())
+      Exit-WithCode 19
+    }
+  }
+  # Удалим каталог, если он пуст
+  If ( ($Level1Directory|Get-ChildItem).Count -eq 0 ) { $Level1Directory | Remove-Item -ErrorAction SilentlyContinue }
+}
+# Удалим файлы из уровня 0 (оставив заданное количество для данного каталога )
+# Изменения каталогов тут не проверяем, так как мы могли параметрами уменьшить глубину хранения
+$L0Files = $DatabaseDirectory | Get-ChildItem -File | Where-Object { $_.Name -Match $BackupFileMask } | Sort-Object -Property 'Name' | Select-Object -SkipLast 1
+$L0Files | Foreach-Object {
+  Try {
+    $_ | Remove-Item -Force
+    Write-Log ('Info: File "' + $_.FullName + '" deleted from "' + $DatabaseDirectory.FullName + '"')
+  } Catch {
+    Write-Log ("Error: Cannot delete file from database directory!")
+    Write-Log ("Error: " + $Error[0].ToString())
+    Exit-WithCode 20
   }
 }
 
