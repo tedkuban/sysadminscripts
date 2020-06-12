@@ -6,12 +6,12 @@ BEGIN TRANSACTION
 
 -----------------------------------------------------
 -- You need to change this definitions!!!
-DECLARE @DBName sysname = 'UT'
-DECLARE @PrimaryBackupPath nvarchar(260) = N'\\192.168.14.42\Backup'
+DECLARE @DBName sysname = 'UPPBU'
+DECLARE @StartTime varchar(5) = '3:00'
+DECLARE @PrimaryBackupPath nvarchar(260) = N'\\backup01.technical\SQLBACKUP'
 DECLARE @SecondaryBackupServer nvarchar(260) = 'backup02.technical'
 DECLARE @ScriptFile nvarchar(260) = N'C:\sqlagent\BackupFileProcessing.ps1'
 DECLARE @PSRemotingConfiguration nvarchar(128) = N'SQLAgent'
-DECLARE @StartTime varchar(5) = '20:28'
 -----------------------------------------------------
 -- This code add daily scheduled job to backup one database to specified folder
 -----------------------------------------------------
