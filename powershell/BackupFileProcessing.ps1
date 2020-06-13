@@ -1,4 +1,4 @@
-<#
+﻿<#
 .Synopsis
     Скрипт для раскладывания бэкапов БД SQL по схеме дед-отец-сын
 .Description
@@ -29,6 +29,19 @@
         PowerShell -NonInteractive -NoProfile "$rs=Invoke-Command -ComputerName SERVER2 -ScriptBlock {&'D:\sqlagent\BackupFileProcessing.ps1' 'TESTDB' '\\SERVER1\Backup' '$(ESCAPE_SQUOTE(STRTDT))' '$(ESCAPE_SQUOTE(MACH))'};$host.SetShouldExit($rs)"
 
     Первый и второй параметры скрипта должны совпадать с первым и вторым параметрами кода T-SQL (@DBName и @BackupPath)
+
+    Настройка глубины хранения находится в каталоге каждой базы данных в файле .settings.json. Настройки по умолчанию выглядят так:
+        {
+            "Level1Copies":  10,
+            "Level2Copies":  5,
+            "Level3Copies":  11,
+            "Level1FolderName":  "__day",
+            "Level2FolderName":  "_week",
+            "Level3FolderName":  "month",
+            "Level2Match":  "Days",
+            "Level2Days":  "1,9,17,25",
+            "Level3Day":  1
+        }
 .Parameter DatabaseName
     Имя базы данных
 .Parameter RemoteStoragePath
@@ -42,18 +55,41 @@
     Use settings from command line rather then stored in .settings.json file
 .Parameter SaveSettings
     Save new or default parameters in .settings.json file
-
-#.Parameter RebootHost
-#    Reboot host machine after cleaning all cache files
-#.Parameter NoRestart
-#    Do not start services after cache cleaning
+.Parameter Level1Copies
+    Сколько копий хранить в каталоге первого уровня
+.Parameter Level1FolderName
+    Имя каталога первого уровня (по умолчанию __day)
+.Parameter Level2Copies
+    Сколько копий хранить в каталоге второго уровня
+.Parameter Level2FolderName
+    Имя каталога второго уровня (по умолчанию _week)
+.Parameter Level2Match
+    По какой методике переносить файлы в каталог второго уровня
+    Варианты - "Days" или "DayOfWeek"
+.Parameter Level2Days
+    Если Level2Match установлено в DayOfWeek, здесь пишем день недели, в который храним недельные копии ( 0 - воскресенье, 6 - суббота )
+    Если Level2Match установлено в Days, здесь пишем список чисел месяцадень недели, в который храним недельные копии ( 0 - воскресенье, 6 - суббота )
+    Варианты - "Days" или "DayOfWeek"
+.Parameter Level3Copies
+    Сколько копий хранить в каталоге третьего уровня
+.Parameter Level3FolderName
+    Имя каталога третьего уровня (по умолчанию month)
+.Parameter Level3Day
+    Здесь пишем число месяца, на которое храним месячные копии
+    Если Level2Match установлено в DayOfWeek, возможен вариант, что файл попадет сразу в третий уровень хранения, минуя второй
+    Так что здесь может появиться еще вариант для третьего уровня, например, если второй уровень пишем каждую среду, то третий уровень - каждую 5-ю среду, например
 .Example
-    --
+    PowerShell .\BackupFileProcessing.ps1 'TESTDB' '\\backup01.technical\SQLBACKUP\' '20200512' SRV001 -Level1Copies 0 -Level2Copies 0 -Level3Copies 0
+       - Скопировать файл бэкапа базы TESTDB, не оставляя никаких дополнительных копий
+    PowerShell .\BackupFileProcessing.ps1 UT '\\backup01.technical\SQLBACKUP\' 20200612 SRV001
+       - Скопировать файл бэкапа базы UT, взяв параметры из настроек каталога, 
+    PowerShell .\BackupFileProcessing.ps1 'ESB' -Level1Copies 8 -Level2Copies 5 -Level3Copies 5 -SaveSettings
+       - Записать новые параметры глубины хранения в каталог базы данных ESB и выйти
 .Component
     MS SQL Server
 .Notes
-    Version: 0.9
-    Date modified: 2020.05.31
+    Version: 1.0
+    Date modified: 2020.06.12
     Autor: Fedor Kubanets AKA Teddy
     Company: HappyLook
 #>
@@ -66,7 +102,7 @@ Param(
   ,[Parameter(Position=4,Mandatory=$False)] [string]$ComputerName
   ,[Parameter(Mandatory=$False)] [int]$Level1Copies = 10
   ,[Parameter(Mandatory=$False)] [int]$Level2Copies = 5
-  ,[Parameter(Mandatory=$False)] [int]$Level3Copies = 10
+  ,[Parameter(Mandatory=$False)] [int]$Level3Copies = 11
   ,[Parameter(Mandatory=$False)] [string]$LocalStoragePath = "E:\SQLBACKUP"
   ,[Parameter(Mandatory=$False)] [switch]$Override = $false
   ,[Parameter(Mandatory=$False)] [switch]$SaveSettings = $false
@@ -241,15 +277,9 @@ Write-Log ('Info: Starting ' + (Get-Date -Format "yyyy.MM.dd HH:mm") )
 #Write-Log ('Info: Level 2 copies:      '+ [int]$Level2Copies )
 #Write-Log ('Info: Level 3 copies:      '+ [int]$Level3Copies )
 
-# Проверим обязательные параметры
-$ParametersError = $false
-If ( ! $DatabaseName ) { Write-Log 'Error: No database name given!'; $ParametersError = $true }
-If ( ! $RemoteStoragePath ) { Write-Log 'Error: No remote storage path given!'; $ParametersError = $true }
-If ( ! $JobStartDate ) { Write-Log 'Error: No job start date given!'; $ParametersError = $true }
-# SQL Server передаст Job Start Date всегда в одном формате (yyyyMMdd без разделителей)
-If ( $JobStartDate -notmatch '\A\d{8}\z' )  { Write-Log 'Error: Job start date must be a 8-digits string!'; $ParametersError = $true }
-#If ( ! $ComputerName ) { Write-Log 'Error: No computer name given!'; $ParametersError = $true }
-If ( $ParametersError ) {
+# Проверим локальный каталог базы данных, потом поработаем с настройками, а потом проверим остальные обязательные параметры
+If ( ! $DatabaseName ) { 
+  Write-Log 'Error: No database name given!'
   Write-Log 'Usage: Get-Help <this script filename>'
   Exit-WithCode 4
 }
@@ -264,6 +294,69 @@ Catch {
   Write-Log ("Error: Cannot get or create database subdirectory!")
   Write-Log ("Error: " + $Error[0].ToString())
   Exit-WithCode 5
+}
+
+# Работа с параметрами базы данных (глубина хранения, названия папок и дни перехода с уровня на уровень)
+# Параметры хранения копий могут быть прочитаны из файла, могут быть получены в параметрах скрипта.
+# Мы должны иметь возможность переопределить параметрами запуска те значения, которые хранятся в файле
+# Мы также должны иметь возможность работать вообще без файла настроек, пользуясь параметрами по умолчанию
+# или параметрами командной строки, при этом не создавая файл настроек.
+# Предположение спорное, не исключено, что мы придем к желанию всегда иметь файл настроек и будем создавать его при отсутствии
+# Параметры из файла могут быть неполными, например, если мы добавим новые в процессе развития функционала
+# Но у нас есть еще и параметры по умолчанию, так что при старте скрипта параметры всегда имеют значение
+# Думаю, лучшим способом будет использовать параметры из файла, а параметры командной строки
+# применять только при наличии отдельного ключа, например, -Override,
+# и отдельный ключ для сохранения новых параметров в файл, например, -SaveSettings
+  
+$SettingsFileName = $DatabaseDirectoryName+'\.settings.json'
+$DirectorySettings = Get-Content $SettingsFileName -ErrorAction SilentlyContinue | ConvertFrom-Json
+
+If ( $DirectorySettings ) {
+  # Список параметров запуска будем предполагать более полным и корректным, поэтому берем его за основу
+  # Если мы получили список параметров из файла, заменяем параметры запуска при отсутствии ключа -Override
+  If ( ! $Override ) {
+    If ( $DirectorySettings.Level1Copies ) { $Level1Copies = [Int]$DirectorySettings.Level1Copies }
+    If ( $DirectorySettings.Level1FolderName ) { $Level1FolderName = [String]$DirectorySettings.Level1FolderName }
+    If ( $DirectorySettings.Level2Copies ) { $Level2Copies = [Int]$DirectorySettings.Level2Copies }
+    If ( $DirectorySettings.Level2FolderName ) { $Level2FolderName = [String]$DirectorySettings.Level2FolderName }
+    If ( $DirectorySettings.Level2Match ) { $Level2Match = [String]$DirectorySettings.Level2Match }
+    If ( $DirectorySettings.Level2Days ) { $Level2Days = [String]$DirectorySettings.Level2Days }
+    If ( $DirectorySettings.Level3Copies ) { $Level3Copies = [Int]$DirectorySettings.Level3Copies }
+    If ( $DirectorySettings.Level3FolderName ) { $Level3FolderName = [String]$DirectorySettings.Level3FolderName }
+    If ( $DirectorySettings.Level3Day ) { $Level3Day = [Int]$DirectorySettings.Level3Day }
+  }
+}
+
+# Сделаем так - если -SaveSettings передано без -Override, никакие операции с файлами не выполняем,
+# только записываем все параметры в .settings.json
+
+If ( $SaveSettings ) {
+  #If ( $Level2Match -match "\ADays\z" ) { $SaveL2Days = ( $Level2Days -join ',' ) } else { $SaveL2Days = [string]$Level2Days }
+  $DirectorySettings = "{`"Level1Copies`":$Level1Copies,`"Level2Copies`":$Level2Copies,`"Level3Copies`":$Level3Copies,`"Level1FolderName`":`"$Level1FolderName`",`"Level2FolderName`":`"$Level2FolderName`",`"Level3FolderName`":`"$Level3FolderName`",`"Level2Match`":`"$Level2Match`",`"Level2Days`":`"$Level2Days`",`"Level3Day`":$Level3Day}"|ConvertFrom-Json
+  $DirectorySettings | ConvertTo-JSON | Out-File -Encoding "UTF8" $SettingsFileName
+  If ( ! $Override ) {
+    #Write-Log ("Warning: Cannot save settings without -Override switch!")
+    Write-Log ("Info: Database settings saved to "+$SettingsFileName)
+    Write-Log ("Info: File operations skipped.")
+    Exit-WithCode 0
+  }
+}
+
+#Write-Log ('Info: Database settings used:')
+#Write-Log ('Info: Level 1 copies:      ' + $Level1Copies + ', directory name: ' + $Level1FolderName )
+#Write-Log ('Info: Level 2 copies:      ' + $Level2Copies + ', directory name: ' + $Level2FolderName + ', match: ' + $Level2Match + ', days: ' + $Level2Days )
+#Write-Log ('Info: Level 3 copies:      ' + $Level3Copies + ', directory name: ' + $Level3FolderName + ', day: ' + $Level3Day )
+
+# Проверим остальные обязательные параметры
+$ParametersError = $false
+If ( ! $RemoteStoragePath ) { Write-Log 'Error: No remote storage path given!'; $ParametersError = $true }
+If ( ! $JobStartDate ) { Write-Log 'Error: No job start date given!'; $ParametersError = $true }
+# SQL Server передаст Job Start Date всегда в одном формате (yyyyMMdd без разделителей)
+If ( $JobStartDate -notmatch '\A\d{8}\z' )  { Write-Log 'Error: Job start date must be a 8-digits string!'; $ParametersError = $true }
+#If ( ! $ComputerName ) { Write-Log 'Error: No computer name given!'; $ParametersError = $true }
+If ( $ParametersError ) {
+  Write-Log 'Usage: Get-Help <this script filename>'
+  Exit-WithCode 4
 }
 
 # Проверим хранилище с оперативным бэкапом и поищем там файл
@@ -330,46 +423,6 @@ Catch {
 ##$FileDate = Get-Date
 ###[DateTime]::TryParseExact( $StartDate, $DateFormat, [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::None, [ref] $FileDate )
 ##If ( $FileDate::TryParseExact( $JobStartDate, $DateFormat, [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::None, [ref] $FileDate ) ) {
-
-# Работа с параметрами базы данных (глубина хранения, названия папок и дни перехода с уровня на уровень)
-# Параметры хранения копий могут быть прочитаны из файла, могут быть получены в параметрах скрипта.
-# Мы должны иметь возможность переопределить параметрами запуска те значения, которые хранятся в файле
-# Но у нас есть еще и параметры по умолчанию, так что при старте скрипта параметры всегдя имеют значение
-# Думаю, лучшим способом будет использовать параметры из файла, а параметры командной строки
-# применять только при наличии отдельного ключа, например, -Override,
-# и отдельный ключ для сохранения новых параметров в файл, например, -SaveSettings
-  
-$SettingsFileName = $DatabaseDirectoryName+'\.settings.json'
-$DirectorySettings = Get-Content $SettingsFileName -ErrorAction SilentlyContinue | ConvertFrom-Json
-
-If ( $DirectorySettings ) {
-  If ( ! $Override ) {
-    If ( $DirectorySettings.Level1Copies ) { $Level1Copies = [Int]$DirectorySettings.Level1Copies }
-    If ( $DirectorySettings.Level1FolderName ) { $Level1FolderName = [String]$DirectorySettings.Level1FolderName }
-    If ( $DirectorySettings.Level2Copies ) { $Level2Copies = [Int]$DirectorySettings.Level2Copies }
-    If ( $DirectorySettings.Level2FolderName ) { $Level2FolderName = [String]$DirectorySettings.Level2FolderName }
-    If ( $DirectorySettings.Level2Match ) { $Level2Match = [String]$DirectorySettings.Level2Match }
-    If ( $DirectorySettings.Level2Days ) { $Level2Days = [String]$DirectorySettings.Level2Days }
-    If ( $DirectorySettings.Level3Copies ) { $Level3Copies = [Int]$DirectorySettings.Level3Copies }
-    If ( $DirectorySettings.Level3FolderName ) { $Level3FolderName = [String]$DirectorySettings.Level3FolderName }
-    If ( $DirectorySettings.Level3Day ) { $Level3Day = [Int]$DirectorySettings.Level3Day }
-  }
-}
-
-If ( $SaveSettings ) {
-  If ( $Override ) {
-    #If ( $Level2Match -match "\ADays\z" ) { $SaveL2Days = ( $Level2Days -join ',' ) } else { $SaveL2Days = [string]$Level2Days }
-    $DirectorySettings = "{`"Level1Copies`":$Level1Copies,`"Level2Copies`":$Level2Copies,`"Level3Copies`":$Level3Copies,`"Level1FolderName`":`"$Level1FolderName`",`"Level2FolderName`":`"$Level2FolderName`",`"Level3FolderName`":`"$Level3FolderName`",`"Level2Match`":`"$Level2Match`",`"Level2Days`":`"$Level2Days`",`"Level3Day`":$Level3Day}"|ConvertFrom-Json
-    $DirectorySettings | ConvertTo-JSON | Out-File -Encoding "UTF8" $SettingsFileName
-  } Else {
-    Write-Log ("Warning: Cannot save settings without -Override switch!")
-  }
-}
-
-#Write-Log ('Info: Database settings used:')
-#Write-Log ('Info: Level 1 copies:      ' + $Level1Copies + ', directory name: ' + $Level1FolderName )
-#Write-Log ('Info: Level 2 copies:      ' + $Level2Copies + ', directory name: ' + $Level2FolderName + ', match: ' + $Level2Match + ', days: ' + $Level2Days )
-#Write-Log ('Info: Level 3 copies:      ' + $Level3Copies + ', directory name: ' + $Level3FolderName + ', day: ' + $Level3Day )
 
 # Копируем файл в корень папки
 Write-Log ('Info: Copying file from remote to local storage')
