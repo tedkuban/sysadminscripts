@@ -42,6 +42,7 @@
             "Level2Days":  "1,9,17,25",
             "Level3Day":  1
         }
+    При каждом вызове скрипта имя компьютера, его вызвавшего, записывается в каталог базы данных в файл .lastsource
 .Parameter DatabaseName
     Имя базы данных
 .Parameter RemoteStoragePath
@@ -333,7 +334,7 @@ If ( $DirectorySettings ) {
 If ( $SaveSettings ) {
   #If ( $Level2Match -match "\ADays\z" ) { $SaveL2Days = ( $Level2Days -join ',' ) } else { $SaveL2Days = [string]$Level2Days }
   $DirectorySettings = "{`"Level1Copies`":$Level1Copies,`"Level2Copies`":$Level2Copies,`"Level3Copies`":$Level3Copies,`"Level1FolderName`":`"$Level1FolderName`",`"Level2FolderName`":`"$Level2FolderName`",`"Level3FolderName`":`"$Level3FolderName`",`"Level2Match`":`"$Level2Match`",`"Level2Days`":`"$Level2Days`",`"Level3Day`":$Level3Day}"|ConvertFrom-Json
-  $DirectorySettings | ConvertTo-JSON | Out-File -Encoding "UTF8" $SettingsFileName
+  $DirectorySettings | ConvertTo-JSON | Out-File -Encoding "UTF8" -FilePath $SettingsFileName
   If ( ! $Override ) {
     #Write-Log ("Warning: Cannot save settings without -Override switch!")
     Write-Log ("Info: Database settings saved to "+$SettingsFileName)
@@ -353,7 +354,7 @@ If ( ! $RemoteStoragePath ) { Write-Log 'Error: No remote storage path given!'; 
 If ( ! $JobStartDate ) { Write-Log 'Error: No job start date given!'; $ParametersError = $true }
 # SQL Server передаст Job Start Date всегда в одном формате (yyyyMMdd без разделителей)
 If ( $JobStartDate -notmatch '\A\d{8}\z' )  { Write-Log 'Error: Job start date must be a 8-digits string!'; $ParametersError = $true }
-#If ( ! $ComputerName ) { Write-Log 'Error: No computer name given!'; $ParametersError = $true }
+If ( ! $ComputerName ) { Write-Log 'Error: No computer name given!'; $ParametersError = $true }
 If ( $ParametersError ) {
   Write-Log 'Usage: Get-Help <this script filename>'
   Exit-WithCode 4
@@ -428,6 +429,9 @@ Catch {
 Write-Log ('Info: Copying file from remote to local storage')
 Try {
   $RemoteBackupFile | Copy-Item -Destination $DatabaseDirectory -Force #-Verbose
+  # Сразу после копирования файла запишем имя компьютера, нас вызвавшего, чтобы в случае чего
+  # быстро узнать, на каком сервере искать эту базу данных
+  $ComputerName | Out-File -Encoding "UTF8" -FilePath ($DatabaseDirectoryName+'\.lastsource')
 }
 Catch {
   Write-Log ("Error: Cannot copy file!")
