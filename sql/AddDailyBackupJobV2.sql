@@ -6,20 +6,22 @@ BEGIN TRANSACTION
 
 -----------------------------------------------------
 -- DO NOT FORGE TO CHANGE VERSION NUMBER AND MODIFICATION DATE !!!
-DECLARE @ScriptVersion nvarchar(10) = '2.1.15'
-DECLARE @ScriptDate datetime = '20200614'
+DECLARE @ScriptVersion nvarchar(10) = '2.2.1'
+DECLARE @ScriptDate datetime = '20200617'
 
 -- You need to change this definitions!!!
-DECLARE @DBName sysname = 'EQ'
-DECLARE @StartTime varchar(5) = '3:48'
+DECLARE @DBName sysname = 'BP_OH_UU'
+DECLARE @StartTime varchar(5) = '19:09'
 -- if a job is found by name, all its steps will be recreated and the schedule will not be changed
---DECLARE @LocalBackupPath nvarchar(260) = N''
-DECLARE @LocalBackupPath nvarchar(260) = N'G:\SQLBackup'
+DECLARE @LocalBackupPath nvarchar(260) = N''
+--DECLARE @LocalBackupPath nvarchar(260) = N'G:\SQLBackup'
 -- If LocalBackupPath is not defined, database will be backed up to PrimaryBackupPath
-DECLARE @PrimaryBackupPath nvarchar(260) = N'\\backup01.technical\SQLBACKUP'
-DECLARE @SecondaryBackupServer nvarchar(260) = 'backup02.technical'
+DECLARE @PrimaryBackupPath nvarchar(260) = N'\\backup-latest.technical\SQLBACKUP'
+DECLARE @SecondaryBackupServer nvarchar(260) = 'backup.technical'
 DECLARE @ScriptFile nvarchar(260) = N'C:\sqlagent\BackupFileProcessing.ps1'
 DECLARE @PSRemotingConfiguration nvarchar(128) = N'SQLAgent'
+DECLARE @OperatorName nvarchar(50) = N'SQLAlert'
+-- If @OperatorName is defined, created job must notify given operator if job fail
 -----------------------------------------------------
 -- This code add daily scheduled job to backup one database to specified folder
 -----------------------------------------------------
@@ -92,6 +94,21 @@ END
 EXEC @ReturnCode = msdb.dbo.sp_update_job
   @job_id=@JobID,
   @description=@JobDescription
+
+IF (@OperatorName <> '')
+  EXEC @ReturnCode = msdb.dbo.sp_update_job @job_id=@JobID,
+		@notify_level_email=2, 
+		@notify_level_page=2, 
+		@notify_email_operator_name=@OperatorName,
+		@notify_page_operator_name=@OperatorName
+  ;
+ELSE
+  EXEC @ReturnCode = msdb.dbo.sp_update_job @job_id=@JobID,
+		@notify_email_operator_name='',
+		@notify_page_operator_name=''
+  ;
+IF (@@ERROR <> 0 OR @ReturnCode <> 0) GOTO QuitWithRollback
+
 
 DECLARE @StepIDD INT = 1
 EXEC @ReturnCode = msdb.dbo.sp_add_jobstep @job_id=@jobId, @step_name=N'CreateDir', 
