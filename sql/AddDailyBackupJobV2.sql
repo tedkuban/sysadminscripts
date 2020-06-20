@@ -6,8 +6,8 @@ BEGIN TRANSACTION
 
 -----------------------------------------------------
 -- DO NOT FORGE TO CHANGE VERSION NUMBER AND MODIFICATION DATE !!!
-DECLARE @ScriptVersion nvarchar(10) = '2.2.1'
-DECLARE @ScriptDate datetime = '20200617'
+DECLARE @ScriptVersion nvarchar(10) = '2.3'
+DECLARE @ScriptDate datetime = '20200620'
 
 -- You need to change this definitions!!!
 DECLARE @DBName sysname = 'BP_OH_UU'
@@ -27,6 +27,7 @@ DECLARE @OperatorName nvarchar(50) = N'SQLAlert'
 -----------------------------------------------------
 DECLARE @JobName nvarchar(200) = N'Backup database (v2) '+@DBName
 DECLARE @JobDescription nvarchar(100) = N'Created by AddDailyBackupJobV2.sql script version '+@ScriptVersion+' modified '+FORMAT(@ScriptDate,'dd.MM.yyyy','en-US' )
+DECLARE @JobCategory nvarchar(50) = N'Database Maintenance'
 
 IF (LTRIM(RTRIM(@LocalBackupPath))='') BEGIN 
   SET @LocalBackupPath = @PrimaryBackupPath
@@ -77,23 +78,24 @@ IF (@JobFound > 0) BEGIN
    IF (@@ERROR <> 0 OR @ReturnCode <> 0) GOTO QuitWithRollback
 END
 ELSE BEGIN
+   IF NOT EXISTS (SELECT name FROM msdb.dbo.syscategories WHERE name=@JobCategory AND category_class=1)
+   BEGIN
+      EXEC @ReturnCode = msdb.dbo.sp_add_category @class=N'JOB', @type=N'LOCAL', @name=@JobCategory
+      IF (@@ERROR <> 0 OR @ReturnCode <> 0) GOTO QuitWithRollback
+   END
    EXEC @ReturnCode = msdb.dbo.sp_add_job @job_name=@JobName, 
 		@enabled=1, 
 		@notify_level_eventlog=0, 
 		@notify_level_email=2, 
 		@notify_level_page=2, 
 		@delete_level=0, 
-		@category_name=N'Database Maintenance', 
+		@category_name=@JobCategory, 
 		@job_id = @jobId OUTPUT
    IF (@@ERROR <> 0 OR @ReturnCode <> 0) GOTO QuitWithRollback
    --select @jobId
    EXEC @ReturnCode = msdb.dbo.sp_add_jobserver @job_id=@JobID, @server_name = N'(LOCAL)'
    IF (@@ERROR <> 0 OR @ReturnCode <> 0) GOTO QuitWithRollback
 END
-
-EXEC @ReturnCode = msdb.dbo.sp_update_job
-  @job_id=@JobID,
-  @description=@JobDescription
 
 IF (@OperatorName <> '')
   EXEC @ReturnCode = msdb.dbo.sp_update_job @job_id=@JobID,
@@ -108,7 +110,6 @@ ELSE
 		@notify_page_operator_name=''
   ;
 IF (@@ERROR <> 0 OR @ReturnCode <> 0) GOTO QuitWithRollback
-
 
 DECLARE @StepIDD INT = 1
 EXEC @ReturnCode = msdb.dbo.sp_add_jobstep @job_id=@jobId, @step_name=N'CreateDir', 
@@ -166,6 +167,10 @@ EXEC @ReturnCode = msdb.dbo.sp_add_jobstep @job_id=@JobID, @step_name=N'FileProc
 		@database_name=N'master', 
 		@flags=32
 IF (@@ERROR <> 0 OR @ReturnCode <> 0) GOTO QuitWithRollback
+
+EXEC @ReturnCode = msdb.dbo.sp_update_job @job_id = @jobId, @start_step_id = 1, @description=@JobDescription
+IF (@@ERROR <> 0 OR @ReturnCode <> 0) GOTO QuitWithRollback
+
 IF (@JobFound = 0) BEGIN
    EXEC @ReturnCode = msdb.dbo.sp_add_jobschedule @job_id=@JobID, @name=@ScheduleName, 
 		@enabled=1, 
