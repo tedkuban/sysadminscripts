@@ -243,6 +243,15 @@ $ErrorActionPreference = "Stop"
 #$VerbosePreference = "continue"
 #$ErrorActionPreference = "SilentlyContinue"
 
+#
+# I want receive all messages in English
+#
+$currentThread = [System.Threading.Thread]::CurrentThread
+$culture = [System.Globalization.CultureInfo]::InvariantCulture
+$currentThread.CurrentCulture = $culture
+$currentThread.CurrentUICulture = $culture
+
+
 $DateFormat = 'yyyy.MM.dd'
 $DateMask = '\d{4}.\d\d.\d\d'
 #$DateFormat = 'yyyyMMdd'
