@@ -10,21 +10,23 @@ DECLARE @ScriptVersion nvarchar(10) = '2.3'
 DECLARE @ScriptDate datetime = '20200620'
 
 -- You need to change this definitions!!!
-DECLARE @DBName sysname = 'BP_OH_UU'
-DECLARE @StartTime varchar(5) = '19:09'
--- if a job is found by name, all its steps will be recreated and the schedule will not be changed
-DECLARE @LocalBackupPath nvarchar(260) = N''
---DECLARE @LocalBackupPath nvarchar(260) = N'G:\SQLBackup'
+DECLARE @DBName sysname = 'TESTDB'
+DECLARE @StartTime varchar(5) = '19:19'
 -- If LocalBackupPath is not defined, database will be backed up to PrimaryBackupPath
+DECLARE @LocalBackupPath nvarchar(260) = N''
+-- If LocalBackupPath is defined, database will be backed up to LocalBackupPath, then backup file will be copied to PrimaryBackupPath
+--DECLARE @LocalBackupPath nvarchar(260) = N'G:\SQLBackup'
 DECLARE @PrimaryBackupPath nvarchar(260) = N'\\backup-latest.technical\SQLBACKUP'
 DECLARE @SecondaryBackupServer nvarchar(260) = 'backup.technical'
 DECLARE @ScriptFile nvarchar(260) = N'C:\sqlagent\BackupFileProcessing.ps1'
 DECLARE @PSRemotingConfiguration nvarchar(128) = N'SQLAgent'
-DECLARE @OperatorName nvarchar(50) = N'SQLAlert'
 -- If @OperatorName is defined, created job must notify given operator if job fail
+DECLARE @OperatorName nvarchar(50) = N''
+--DECLARE @OperatorName nvarchar(50) = N'SQLAlert'
 -----------------------------------------------------
 -- This code add daily scheduled job to backup one database to specified folder
 -----------------------------------------------------
+-- if a job is found by name, all its steps will be recreated and the schedule will not be changed
 DECLARE @JobName nvarchar(200) = N'Backup database (v2) '+@DBName
 DECLARE @JobDescription nvarchar(100) = N'Created by AddDailyBackupJobV2.sql script version '+@ScriptVersion+' modified '+FORMAT(@ScriptDate,'dd.MM.yyyy','en-US' )
 DECLARE @JobCategory nvarchar(50) = N'Database Maintenance'
