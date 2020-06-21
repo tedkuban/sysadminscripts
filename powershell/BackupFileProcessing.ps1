@@ -1,6 +1,13 @@
 ﻿<#
 .Synopsis
     Скрипт для раскладывания бэкапов БД SQL по схеме дед-отец-сын
+.Component
+    MS SQL Server
+.Notes
+    Version: 1.1
+    Date modified: 2020.06.21
+    Autor: Fedor Kubanets AKA Teddy
+    Company: HappyLook
 .Description
     Этот скрипт запускается из задания SQL Agent Job после выполнения резервного копирования
     SQL-Server делает бэкап, затем вызывает удаленное выполнение данного скрипта на сервере
@@ -48,8 +55,10 @@
 .Parameter RemoteStoragePath
     Откуда брать бэкап
 .Parameter JobStartDate
-    Дата начала задания на сервере SQL (использум только ее, так как бэкап может делаться с переходом суток,
-    а нам нужно найти определенный файл)
+    Дата начала задания на сервере SQL (использум только ее, так как старт и финиш бэкапа могут быть в разных сутках,
+    а нам нужно найти определенный файл, и дата модификации файла нам не подходит)
+    На будущее - можно доработать, убрав вообще дату, пусть обрабатываются все файлы в каталоге первичного сервера,
+    еще и задать параметр, сколько файлов там оставлять
 .Parameter $ComputerName
     Имя вызывающего компьютера (пока не знаю, как его получить изнутри скрипта)
 .Parameter Override
@@ -86,13 +95,6 @@
        - Скопировать файл бэкапа базы UT, взяв параметры из настроек каталога, 
     PowerShell .\BackupFileProcessing.ps1 'ESB' -Level1Copies 8 -Level2Copies 5 -Level3Copies 5 -SaveSettings
        - Записать новые параметры глубины хранения в каталог базы данных ESB и выйти
-.Component
-    MS SQL Server
-.Notes
-    Version: 1.0
-    Date modified: 2020.06.12
-    Autor: Fedor Kubanets AKA Teddy
-    Company: HappyLook
 #>
 [CmdletBinding(DefaultParameterSetName="All")]
 Param(
