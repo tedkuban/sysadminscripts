@@ -4,23 +4,27 @@
 .Description
 .Parameter Channel
     Канал, куда отправлять (можно и личное сообщение через @)
-.Parameter Text
+.Parameter Message
     Собственно текст сообщения
 .Example
     PowerShell .\SendToSlack.ps1 '#backup' 'Database TESTDB backup completed succesfully.'
 .Component
     powershell
 .Notes
-    Version: 0.4
-    Date modified: 2020.06.20
+    Version: 0.5
+    Date modified: 2020.06.22
     Autor: Fedor Kubanets AKA Teddy
     Company: HappyLook
+.Example
+    PowerShell .\SendToSlack.ps1 -Channel '#general' -Message 'Hello, World!' -Uri 'https://hooks.slack.com/services/T00000000/B00000000/AAAAAAAAAAAAAAAAAAAAAAAA'
+    PowerShell .\SendToSlack.ps1 -Channel '#general' -Message 'Hello, World!'
+    PowerShell .\SendToSlack.ps1 '#general' 'Hello, World!'
 #>
 [CmdletBinding(DefaultParameterSetName="All")]
 Param(
 #  [Parameter(Mandatory=$True,Position=1)]
   [Parameter(Position=1,Mandatory=$False)] [string]$Channel = '#notify'
-  ,[Parameter(Position=2,Mandatory=$False)] [string]$Text = '!no message text given from caller!'
+  ,[Parameter(Position=2,Mandatory=$False)] [string]$Message = '!no message text given from caller!'
   ,[Parameter(Mandatory=$False)] [string]$Uri = 'https://hooks.slack.com/services/T00000000/B00000000/AAAAAAAAAAAAAAAAAAAAAAAA'
 )
 
@@ -44,11 +48,13 @@ $currentThread.CurrentUICulture = $culture
 
 # Generates POST message to be sent to the slack channel. 
 #$PostMessage = @{channel="$Channel";text="$Text";username="$BotName";icon_emoji=":robot_face:"}
-$PostMessage = ("{""username"":""$Computer SQL Server"",""channel"":""$Channel"",""icon_emoji"":"":robot_face:"",""text"":""$Text""}"|ConvertFrom-JSON)
+$PostMessage = ("{""username"":""$Computer SQL Server"",""channel"":""$Channel"",""icon_emoji"":"":robot_face:"",""text"":""$Message""}"|ConvertFrom-JSON)
 #ConvertTo-JSON $PostMessage
 
 Try {
   # Sends HTTPS request to the Slack Web API service. 
+  #[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+  [Net.ServicePointManager]::SecurityProtocol = "tls12, tls11, tls"
   $WebRequest = Invoke-WebRequest -UseBasicParsing -Uri $Uri -ContentType "application/json; charset=utf-8" -Method Post -Body (ConvertTo-JSON $PostMessage)
   # Conditional logic to generate custom error message if JSON object response contains a top-level error property. 
   If ($WebRequest.Content -like '*"ok":false*') {
