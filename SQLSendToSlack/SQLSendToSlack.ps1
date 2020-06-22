@@ -94,6 +94,7 @@ $DataSet.Tables[0]|Foreach-Object {
 
   Try {
     # Sends HTTPS request to the Slack Web API service. 
+    [Net.ServicePointManager]::SecurityProtocol = "tls12, tls11, tls"
     $WebRequest = Invoke-WebRequest -UseBasicParsing -Uri $Uri -ContentType "application/json; charset=utf-8" -Method Post -Body (ConvertTo-JSON $PostMessage)
     # Conditional logic to generate custom error message if JSON object response contains a top-level error property. 
     #$WebRequest.Content
