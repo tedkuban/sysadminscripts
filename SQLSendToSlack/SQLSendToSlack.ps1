@@ -13,31 +13,35 @@
     сообщение чистить все записи старше суток, например.
 
     Первым и единственным шагом задания выполняется данный скрипт
-    (передаем только имя вызвавшего компьютера, и только для формирования имени отправителя для Slack):
-        PowerShell -NonInteractive -NoProfile -NoLogo "C:\sqlagent\SQLSendToSlack.ps1' -$ComputerName '$(ESCAPE_SQUOTE(MACH))'
-.Parameter Computer
-    Имя сервера-отправителя
+    Существует два варианта запуска, с типом шага задания CmdExec или PowerShell
+    В первом случае скрипт в виде файла лежит в каталоге, доступном агенту SQL для чтения, и запускается так:
+        PowerShell -NonInteractive -NoProfile -NoLogo 'C:\sqlagent\SQLSendToSlack.ps1' -Uri 'https://hooks.slack.com/services/T00000000/B00000000/AAAAAAAAAAAAAAAAAAAAAAAA'
+    во втором случае весь скрипт целиком копируется в тело шага задания.
+    Добавил параметр -Uri
+    Теперь этот скрипт без изменений можно использовать из шага задания типа CMDEXEC в виде файла
+    и в шаге задания типа PowerShell, куда нужно скопировать текст скрипта целиком и вписать $Uri
+.Parameter Uri
+    Строка подключения к Slack API (WebHook)
 .Example
-    PowerShell .\SQLSendToSlack.ps1 'SRV016'
+    PowerShell .\SQLSendToSlack.ps1 -Uri 'https://hooks.slack.com/services/T00000000/B00000000/AAAAAAAAAAAAAAAAAAAAAAAA'
 .Component
     MS SQL Server
 .Notes
-    Version: 0.8
-    Date modified: 2020.06.20
+    Version: 1.0
+    Date modified: 2020.06.26
     Autor: Fedor Kubanets AKA Teddy
     Company: HappyLook
 #>
 [CmdletBinding(DefaultParameterSetName="All")]
 Param(
 #  [Parameter(Mandatory=$True,Position=1)]
-  [Parameter(Position=1,Mandatory=$False)] [string]$Computer = 'NULL'
-  ,[Parameter(Mandatory=$False)] [string]$Uri = 'https://hooks.slack.com/services/T00000000/B00000000/AAAAAAAAAAAAAAAAAAAAAAAA'
+  [Parameter(Mandatory=$False)] [string]$Uri = 'https://hooks.slack.com/services/T00000000/B00000000/AAAAAAAAAAAAAAAAAAAAAAAA'
 )
 
 function Exit-WithCode
 {
   param ( $exitcode )
-  Write-Output ($exitcode)
+  #Write-Output ($exitcode)
   $host.SetShouldExit($exitcode)
   exit $exitcode
 }
@@ -50,6 +54,7 @@ $culture = [System.Globalization.CultureInfo]::InvariantCulture
 $currentThread.CurrentCulture = $culture
 $currentThread.CurrentUICulture = $culture
 
+$Computer = $env:COMPUTERNAME
 $BotName = $Computer + ' SQL Server'
 # Generates POST message to be sent to the slack channel. 
 
@@ -71,8 +76,8 @@ Try {
   #$DataSet.Tables[0]
 } # Try 
 Catch {
-  Write-Host ( "Error: Exeption during SQL select query!" )
-  Write-Host ( "Error: " + $Error[0].ToString() )
+  Write-Output ( "Error: Exeption during SQL select query!" )
+  Write-Output ( "Error: " + $Error[0].ToString() )
   Exit-WithCode 1
 } # Catch 
 
@@ -80,8 +85,8 @@ Try {
   $SqlConnection.Open()
 } # Try 
 Catch {
-  Write-Host ( "Error: Exeption during reopen SQL connection!" )
-  Write-Host ( "Error: " + $Error[0].ToString() )
+  Write-Output ( "Error: Exeption during reopen SQL connection!" )
+  Write-Output ( "Error: " + $Error[0].ToString() )
   Exit-WithCode 2
 } # Catch 
 #$SQLResult = $DataSet.Tables[0]
@@ -101,18 +106,18 @@ $DataSet.Tables[0]|Foreach-Object {
     If ($WebRequest.Content -like '*"ok":false*') {
       # Terminates with error if the response contains an error property, parses the error code and stops processing of the command. 
       #Throw ( $WebRequest.Content -split '"error":"') [1] -replace '"}',''
-      Write-Host ( "Error: Error sending Slack web request!" )
-      #Write-Host ( "Error: " + $Error[0].ToString() )
-      Write-Host ( "Error: " + (( $WebRequest.Content -split '"error":"')[1] -replace '"}','') )
+      Write-Output ( "Error: Error sending Slack web request!" )
+      #Write-Output ( "Error: " + $Error[0].ToString() )
+      Write-Output ( "Error: " + (( $WebRequest.Content -split '"error":"')[1] -replace '"}','') )
       Continue
     } # If 
   } # Try 
   Catch {
     # Terminates with error and stops processing of the command. 
     #Throw ("Unable to send request to the web service with the following exception: " + $Error[0].Exception.Message )
-    Write-Host ( "Error: Exeption during sending Slack web request!" )
-    Write-Host ( "Error: " + $Error[0].ToString() )
-    #Write-Host ( "Error: " + $Error[0].Exception.Message )
+    Write-Output ( "Error: Exeption during sending Slack web request!" )
+    Write-Output ( "Error: " + $Error[0].ToString() )
+    #Write-Output ( "Error: " + $Error[0].Exception.Message )
     #Exit-WithCode 2
     Continue
   } # Catch 
@@ -123,16 +128,16 @@ $DataSet.Tables[0]|Foreach-Object {
     $rowsAffected = $SqlCmd.ExecuteNonQuery();
   } # Try 
   Catch {
-    Write-Host ( "Error: Exeption during SQL delete query!" )
-    Write-Host ( "Error: " + $Error[0].ToString() )
+    Write-Output ( "Error: Exeption during SQL delete query!" )
+    Write-Output ( "Error: " + $Error[0].ToString() )
   } # Catch 
 } # Foreach-Object
 Try {
   $SqlConnection.Close()
 } # Try 
 Catch {
-  Write-Host ( "Error: Exeption during closing SQL connection!" )
-  Write-Host ( "Error: " + $Error[0].ToString() )
+  Write-Output ( "Error: Exeption during closing SQL connection!" )
+  Write-Output ( "Error: " + $Error[0].ToString() )
   Exit-WithCode 4
 } # Catch 
 
