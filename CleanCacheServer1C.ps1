@@ -65,7 +65,7 @@ If ($RebootHost) {
   Write-Host "Rebooting..."
   #shutdown -r -t 0
   #Restart-Computer
-  Restart-Computer -Confirm:$False
+  Restart-Computer -Force -Confirm:$False
   #Exit
 }
 
