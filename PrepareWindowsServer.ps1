@@ -40,6 +40,7 @@ Disable-Service -ServiceName "MapsBroker"
 Disable-Service -ServiceName "spooler"
 Disable-Service -ServiceName "WPDBusEnum"
 Disable-Service -ServiceName "DiagTrack"
+Disable-Service -ServiceName "dmwappushservice"
 
 # Disable IPv6
 Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip6\Parameters" -Name "DisabledComponents" -Value 0xFFFFFFFF
