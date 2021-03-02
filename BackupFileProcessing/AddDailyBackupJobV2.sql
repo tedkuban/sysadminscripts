@@ -10,8 +10,8 @@ DECLARE @ScriptVersion nvarchar(10) = '2.3'
 DECLARE @ScriptDate datetime = '20200620'
 
 -- You need to change this definitions!!!
-DECLARE @DBName sysname = 'TESTDB'
-DECLARE @StartTime varchar(5) = '19:19'
+DECLARE @DBName sysname = 'CONNECT1C'
+DECLARE @StartTime varchar(5) = '19:41'
 -- If LocalBackupPath is not defined, database will be backed up to PrimaryBackupPath
 DECLARE @LocalBackupPath nvarchar(260) = N''
 -- If LocalBackupPath is defined, database will be backed up to LocalBackupPath, then backup file will be copied to PrimaryBackupPath
@@ -21,8 +21,8 @@ DECLARE @SecondaryBackupServer nvarchar(260) = 'backup.technical'
 DECLARE @ScriptFile nvarchar(260) = N'C:\sqlagent\BackupFileProcessing.ps1'
 DECLARE @PSRemotingConfiguration nvarchar(128) = N'SQLAgent'
 -- If @OperatorName is defined, created job must notify given operator if job fail
-DECLARE @OperatorName nvarchar(50) = N''
---DECLARE @OperatorName nvarchar(50) = N'SQLAlert'
+--DECLARE @OperatorName nvarchar(50) = N''
+DECLARE @OperatorName nvarchar(50) = N'SQLAlert'
 -----------------------------------------------------
 -- This code add daily scheduled job to backup one database to specified folder
 -----------------------------------------------------
