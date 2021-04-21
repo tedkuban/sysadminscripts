@@ -43,7 +43,10 @@ Disable-Service -ServiceName "DiagTrack"
 Disable-Service -ServiceName "dmwappushservice"
 
 # Disable IPv6
-Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip6\Parameters" -Name "DisabledComponents" -Value 0xFFFFFFFF
+# Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip6\Parameters" -Name "DisabledComponents" -Value 0xFFFFFFFF
+# Recommendation from Microsoft - do not use 0xFFFFFFFF value!
+# https://docs.microsoft.com/ru-ru/troubleshoot/windows-server/group-policy/netlogon-event-id-5719-or-group-policy-event-1129
+Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip6\Parameters" -Name "DisabledComponents" -Value 0xFF
 
 # Disable User Accout Control
 Set-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System" -Name "EnableLUA" -Value 0

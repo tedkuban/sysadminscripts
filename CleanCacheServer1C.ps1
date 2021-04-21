@@ -78,8 +78,8 @@ If ( $StillRunning -gt 0 ) {
   Get-Item "$ProfilePath\AppData\Local\1C\1Cv8\*","$ProfilePath\AppData\Roaming\1C\1Cv8\*" | Where {$_.Name -as [guid]} | Remove-Item -Force -Recurse
   Write-Host "Deleting TEMP folders..."
   Get-Item "$ProfilePath\AppData\Local\Temp\*" | Remove-Item -Force -Recurse
-  Write-Host "Deleting .pfl files..."
-  Get-Item "$PFLPath\*.pfl" | Remove-Item -Force -Recurse
+  #Write-Host "Deleting .pfl files..."
+  #Get-Item "$PFLPath\*.pfl" | Remove-Item -Force -Recurse
   Write-Host "Deleting reg_* GUID folders..."
   Get-Item "$ServerPath\reg_*\*" | Where PSIsContainer | Where {$_.Name -as [guid]} | Foreach-Object {
     Get-ChildItem -Path $_ | Where { !$_.PSIsContainer } | Remove-Item -Force
