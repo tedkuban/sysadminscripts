@@ -134,6 +134,8 @@ powercfg /S 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c
 # Solve RDP keyboard layout bug
 Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\Keyboard Layout" -Name "IgnoreRemoteKeyboardLayout" -Value 1
 
+# Disable Windows Firewall (allow all incoming connections)
+netsh advfirewall set allprofiles firewallpolicy allowinbound,allowoutbound
 
 # Detecting hardware or virtual platform
 # $ComputerModel = (Get-CimInstance -ClassName CIM_ComputerSystem).Model
