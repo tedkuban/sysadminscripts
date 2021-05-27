@@ -4,10 +4,10 @@
 .Component
     MS SQL Server
 .Notes
-    Version: 1.1
-    Date modified: 2020.06.21
+    Version: 1.2
+    Date modified: 2021.07.27
     Autor: Fedor Kubanets AKA Teddy
-    Company: HappyLook
+    Company: HappyLook (Счастливый Взгляд)
 .Description
     Этот скрипт запускается из задания SQL Agent Job после выполнения резервного копирования
     SQL-Server делает бэкап, затем вызывает удаленное выполнение данного скрипта на сервере
@@ -59,7 +59,9 @@
     а нам нужно найти определенный файл, и дата модификации файла нам не подходит)
     На будущее - можно доработать, убрав вообще дату, пусть обрабатываются все файлы в каталоге первичного сервера,
     еще и задать параметр, сколько файлов там оставлять
-.Parameter $ComputerName
+.Parameter LocalStoragePath
+    Корневой каталог локального хранилища
+.Parameter ComputerName
     Имя вызывающего компьютера (пока не знаю, как его получить изнутри скрипта)
 .Parameter Override
     Use settings from command line rather then stored in .settings.json file
@@ -78,8 +80,7 @@
     Варианты - "Days" или "DayOfWeek"
 .Parameter Level2Days
     Если Level2Match установлено в DayOfWeek, здесь пишем день недели, в который храним недельные копии ( 0 - воскресенье, 6 - суббота )
-    Если Level2Match установлено в Days, здесь пишем список чисел месяцадень недели, в который храним недельные копии ( 0 - воскресенье, 6 - суббота )
-    Варианты - "Days" или "DayOfWeek"
+    Если Level2Match установлено в Days, здесь пишем список чисел месяца через запятую
 .Parameter Level3Copies
     Сколько копий хранить в каталоге третьего уровня
 .Parameter Level3FolderName
