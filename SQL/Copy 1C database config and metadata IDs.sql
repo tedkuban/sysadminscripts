@@ -4,8 +4,8 @@
 Запускать на принимающем сервере.
 После выполнения запустить тестирование и исправление, выбрать как минимум два пункта - реиндексацию и реструктуризацию.
 
-Version:	0.9 beta
-Modified:	2021.05.27
+Version:	0.9.1 beta
+Modified:	2021.05.28
 Author:		Fedor Kubanets AKA Teddy, St.-Petersburg
 Company:	HappyLook (Счастливый Взгляд)
 (c) 2021
@@ -14,15 +14,17 @@ Company:	HappyLook (Счастливый Взгляд)
 
 USE master
 SET NOEXEC OFF
-DECLARE @SOURCE_SERVER sysname = 'SRV201'
-DECLARE @SOURCE_DB sysname = 'RM_TEST'
-
+-- База на связанном сервере
+DECLARE @SOURCE_SERVER sysname = 'SRV02'
+DECLARE @SOURCE_DB sysname = 'SRCDB2'
+-- База на локальном сервере
 --DECLARE @SOURCE_SERVER sysname = NULL
---DECLARE @SOURCE_DB sysname = 'RM_CONFIG_5'
-DECLARE @SOURCE_DB_OWNER nvarchar(128)
-DECLARE @DEST_DB sysname = 'RM_CONFIG_7'
-DECLARE @DEST_DB_ID bigint
+--DECLARE @SOURCE_DB sysname = 'SRCDB1'
+DECLARE @DEST_DB sysname = 'DSTDB'
 DECLARE @USERS_TABLE sysname = '_Reference20'
+
+DECLARE @SOURCE_DB_OWNER nvarchar(128)
+DECLARE @DEST_DB_ID bigint
 DECLARE @SQL nvarchar(max)
 DECLARE @SQL_SOURCE_SERVER_ADDON nvarchar(max) = ''
 
@@ -108,7 +110,6 @@ WHILE 1=1 BEGIN
   
   --PRINT CHARINDEX(''_'',@TABLE_NAME)
   IF CHARINDEX(''_Document'',@TABLE_NAME) = 1 SET @COPY_METHOD=0
-  IF CHARINDEX(''_Reference'',@TABLE_NAME) = 1 SET @COPY_METHOD=0
   IF CHARINDEX(''_AccumRg'',@TABLE_NAME) = 1 SET @COPY_METHOD=0
   IF CHARINDEX(''_InfoRg'',@TABLE_NAME) = 1 SET @COPY_METHOD=0
   IF CHARINDEX(''_DataHistory'',@TABLE_NAME) = 1 SET @COPY_METHOD=0
@@ -139,8 +140,9 @@ WHILE 1=1 BEGIN
 	-- Вот досюда
 	
 	-- Если нужны константы - раскомментировать, но тогда в целевую БД попадет и история изменения констант (_ConstChngR....)
-	--IF (CHARINDEX(''.[_Const'',@TABLE_NAME) = 1) SET @COPY_METHOD=2
+	IF (CHARINDEX(''.[_Const'',@TABLE_NAME) = 1) SET @COPY_METHOD=2
 	IF (CHARINDEX(''.[_Enum'',@TABLE_NAME) = 1) SET @COPY_METHOD=2
+    IF CHARINDEX(''_Reference'',@TABLE_NAME) = 1 SET @COPY_METHOD=2
   END
   --ELSE SET @COPY_METHOD=2;
   --PRINT @COPY_METHOD;
