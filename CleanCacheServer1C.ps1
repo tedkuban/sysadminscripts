@@ -10,20 +10,22 @@
 .Parameter $PFLPath
     Specifies the path to folder where 1C Server store .PFL files
 .Parameter $Pause1
-    Specifies the seconds to wait after services are stopped and all processes killed
+    Specifies the seconds to wait between services are stopped and all processes killed
 .Parameter $Pause2
     Specifies the seconds to wait before starting services
+.Parameter CleanConnectionProfile
+    Also deletes .PFL files, located by default in C:\ProgramData\1C\1cv8
 .Parameter RebootHost
     Reboot host machine after all cache files are cleared
 .Parameter NoRestart
     Do not start services after cache cleaning
 .Example
-    CleanCacheServer1C -ServerPath "D:\V8SRVDATA" -RebootHost
+    CleanCacheServer1C -ServerPath "E:\V8SRVDATA" -RebootHost
 .Component
     1C:Enterprise v8
 .Notes
-    Version: 0.1
-    Date modified: 2019.11.20
+    Version: 0.9
+    Date modified: 2021.06.22
     Autor: Fedor Kubanets AKA Teddy
     Company: HappyLook
 #>
@@ -35,6 +37,7 @@ Param(
   [Parameter(Position=3,Mandatory=$False)] [string]$PFLPath = "C:\ProgramData\1C\1cv8",
   [Parameter(Mandatory=$False)] [int]$Pause1 = 20,
   [Parameter(Mandatory=$False)] [int]$Pause2 = 5,
+  [Parameter()] [switch]$CleanConnectionProfile,
   [Parameter()] [switch]$RebootHost,
   [Parameter()] [switch]$NoRestart
 )
@@ -78,8 +81,10 @@ If ( $StillRunning -gt 0 ) {
   Get-Item "$ProfilePath\AppData\Local\1C\1Cv8\*","$ProfilePath\AppData\Roaming\1C\1Cv8\*" | Where {$_.Name -as [guid]} | Remove-Item -Force -Recurse
   Write-Host "Deleting TEMP folders..."
   Get-Item "$ProfilePath\AppData\Local\Temp\*" | Remove-Item -Force -Recurse
-  #Write-Host "Deleting .pfl files..."
-  #Get-Item "$PFLPath\*.pfl" | Remove-Item -Force -Recurse
+  If ( $CleanConnectionProfile ) {
+    Write-Host "Deleting .pfl files..."
+    Get-Item "$PFLPath\*.pfl" | Remove-Item -Force -Recurse
+  }
   Write-Host "Deleting reg_* GUID folders..."
   Get-Item "$ServerPath\reg_*\*" | Where PSIsContainer | Where {$_.Name -as [guid]} | Foreach-Object {
     Get-ChildItem -Path $_ | Where { !$_.PSIsContainer } | Remove-Item -Force
