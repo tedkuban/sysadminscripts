@@ -1,9 +1,16 @@
-function Start-Sleep($seconds) {
-    $doneDT = (Get-Date).AddSeconds($seconds)
+function Start-Sleep {
+Param(
+  [Parameter(Position=1,Mandatory=$True,ValueFromPipeline=$True,ParameterSetName='Seconds')] [int]$Seconds,
+  [Parameter(Mandatory=$True,ParameterSetName='Milliseconds')] [int]$Milliseconds
+)
+    If ($Seconds) {
+      $Milliseconds = $seconds * 1000
+    }
+    $doneDT = (Get-Date).AddMilliseconds($Milliseconds)
     while($doneDT -gt (Get-Date)) {
-        $secondsLeft = $doneDT.Subtract((Get-Date)).TotalSeconds
-        $percent = ($seconds - $secondsLeft) / $seconds * 100
-        Write-Progress -Activity "Sleeping" -Status "Sleeping..." -SecondsRemaining $secondsLeft -PercentComplete $percent
+        $TimeRemaining = $doneDT.Subtract((Get-Date))
+        $Percent = ($Milliseconds - $TimeRemaining.TotalMilliseconds) / $Milliseconds * 100
+        Write-Progress -Activity "Sleeping" -Status "Sleeping..." -SecondsRemaining $TimeRemaining.TotalSeconds -PercentComplete $Percent
         [System.Threading.Thread]::Sleep(500)
     }
     Write-Progress -Activity "Sleeping" -Status "Sleeping..." -SecondsRemaining 0 -Completed
