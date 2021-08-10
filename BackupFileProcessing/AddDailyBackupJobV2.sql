@@ -10,8 +10,8 @@ DECLARE @ScriptVersion nvarchar(10) = '2.3'
 DECLARE @ScriptDate datetime = '20200620'
 
 -- You need to change this definitions!!!
-DECLARE @DBName sysname = 'CONNECT1C'
-DECLARE @StartTime varchar(5) = '19:41'
+DECLARE @DBName sysname = 'HISTORY'
+DECLARE @StartTime varchar(5) = '06:24'
 -- If LocalBackupPath is not defined, database will be backed up to PrimaryBackupPath
 DECLARE @LocalBackupPath nvarchar(260) = N''
 -- If LocalBackupPath is defined, database will be backed up to LocalBackupPath, then backup file will be copied to PrimaryBackupPath
