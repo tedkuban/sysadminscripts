@@ -6,8 +6,8 @@ BEGIN TRANSACTION
 
 -----------------------------------------------------
 -- DO NOT FORGE TO CHANGE VERSION NUMBER AND MODIFICATION DATE !!!
-DECLARE @ScriptVersion nvarchar(10) = '2.3'
-DECLARE @ScriptDate datetime = '20200620'
+DECLARE @ScriptVersion nvarchar(10) = '2.4'
+DECLARE @ScriptDate datetime = '20210827'
 
 -- You need to change this definitions!!!
 DECLARE @DBName sysname = 'HISTORY'
@@ -51,7 +51,7 @@ END
 
 DECLARE @Step4SQL nvarchar(max)
 DECLARE @Step4SQLpart1 nvarchar(max) = N'PowerShell -NonInteractive -NoProfile "'
-DECLARE @Step4SQLpart2 nvarchar(max) = N'$CN='''+@SecondaryBackupServer+''';$P=(Resolve-DnsName -DnsOnly -Name $CN -Type PTR -ErrorAction SilentlyContinue);If ($P -ne $NULL){$CN=$P[-1].NameHost};'
+DECLARE @Step4SQLpart2 nvarchar(max) = N'$CN='''+@SecondaryBackupServer+''';$P=(Resolve-DnsName -DnsOnly -Name $CN -Type A_AAAA -ErrorAction SilentlyContinue);If($P.Count){If($P[-1].Name){$CN=$P[-1].Name}};'
 DECLARE @Step4SQLpart3 nvarchar(max) = N'$rs=Invoke-Command -ComputerName $CN -ConfigurationName '+@PSRemotingConfiguration+' -ScriptBlock {&'''+@ScriptFile+''' '''+@DBName+''' '''+@PrimaryBackupPath+''' ''$(ESCAPE_SQUOTE(STRTDT))'' ''$(ESCAPE_SQUOTE(MACH))''}'
 DECLARE @Step4SQLpart4 nvarchar(max) = N';$host.SetShouldExit($rs)"'
 SET @Step4SQL = @Step4SQLpart1 + @Step4SQLpart2 + @Step4SQLpart3 + @Step4SQLpart4
