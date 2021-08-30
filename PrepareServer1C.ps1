@@ -17,6 +17,16 @@ Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters
 Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters" -Name "TcpTimedWaitDelay" -Value 30
 Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters" -Name "StrictTimeWaitSeqCheck" -Value 1
 
+Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\AFD\Parameters" -Name "EnableDynamicBacklog"
+Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\AFD\Parameters" -Name "MinimumDynamicBacklog"
+Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\AFD\Parameters" -Name "MaximumDynamicBacklog"
+Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\AFD\Parameters" -Name "DynamicBacklogGrowthDelta"
+
+Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\AFD\Parameters" -Name "EnableDynamicBacklog" -Value 1
+Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\AFD\Parameters" -Name "MinimumDynamicBacklog" -Value 20
+Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\AFD\Parameters" -Name "MaximumDynamicBacklog" -Value 20000
+Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\AFD\Parameters" -Name "DynamicBacklogGrowthDelta" -Value 10
+
 netsh int ipv4 set dynamicport tcp start=10000 num=54510
 netsh int ipv4 set dynamicport udp start=10000 num=54510
 netsh int ipv6 set dynamicport tcp start=10000 num=54510
