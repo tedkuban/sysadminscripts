@@ -4,8 +4,8 @@
 .Component
     MS SQL Server
 .Notes
-    Version: 1.2
-    Date modified: 2021.07.27
+    Version: 1.3
+    Date modified: 2021.08.30
     Autor: Fedor Kubanets AKA Teddy
     Company: HappyLook (Счастливый Взгляд)
 .Description
@@ -89,6 +89,10 @@
     Здесь пишем число месяца, на которое храним месячные копии
     Если Level2Match установлено в DayOfWeek, возможен вариант, что файл попадет сразу в третий уровень хранения, минуя второй
     Так что здесь может появиться еще вариант для третьего уровня, например, если второй уровень пишем каждую среду, то третий уровень - каждую 5-ю среду, например
+.Parameter DateFormat
+    Пока работаем с двумя форматами - 'yyyy.MM.dd' или 'yyyyMMdd' - можно выбрать, дата в имени файла содержит точки или нет
+.Parameter FileExtension
+    Расширение файла бэкапа - сделано для работы с SSAS, чтобы выбирать между .bak и .abf, но можно выбрать любое, это просто строка
 .Example
     PowerShell .\BackupFileProcessing.ps1 'TESTDB' '\\backup01.technical\SQLBACKUP\' '20200512' SRV001 -Level1Copies 0 -Level2Copies 0 -Level3Copies 0
        - Скопировать файл бэкапа базы TESTDB, не оставляя никаких дополнительных копий
@@ -117,6 +121,8 @@ Param(
   ,[Parameter(Mandatory=$False)] [string]$Level2Days = '1,9,17,25' # 
   #,[Parameter(Mandatory=$False)] [string]$Level2Days = 0 # Воскресенье
   ,[Parameter(Mandatory=$False)] [string]$Level3Day = 1 # 1-го числа каждого месяца
+  ,[Parameter(Mandatory=$False)] [string]$DateFormat = 'yyyy.MM.dd' # Второй вариант 'yyyyMMdd', остальные надо дописвывать
+  ,[Parameter(Mandatory=$False)] [string]$FileExtension = 'bak' # Второй вариант 'abf'
 )
 
 function Exit-WithCode
@@ -176,8 +182,8 @@ $NameToResolve
 
 Function Get-FileDate {
   Param( [Parameter(Mandatory=$True,ValueFromPipeline=$True)] [Object] $File )
-  # Удалим расширение (.bak) и будем считать, что дата в указанном формате содержится в конце имени
-  $FileDateString = ($File.Name).Substring($File.Name.Length-($script:DateFormat.Length+('.bak').Length),$script:DateFormat.Length)
+  # Удалим расширение ($FileExtension) и будем считать, что дата в указанном формате содержится в конце имени
+  $FileDateString = ($File.Name).Substring($File.Name.Length-($script:DateFormat.Length+('.'+$FileExtension).Length),$script:DateFormat.Length)
   $FileDate = Get-Date
   # Разберем дату архива вычислим год, месяц, день и день недели этой даты
     #[DateTime]::TryParseExact( $StartDate, $DateFormat, [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::None, [ref] $FileDate )
@@ -254,12 +260,10 @@ $culture = [System.Globalization.CultureInfo]::InvariantCulture
 $currentThread.CurrentCulture = $culture
 $currentThread.CurrentUICulture = $culture
 
-
-$DateFormat = 'yyyy.MM.dd'
-$DateMask = '\d{4}.\d\d.\d\d'
-#$DateFormat = 'yyyyMMdd'
-#$DateMask = '\d{8}'
-
+Switch ($DateFormat) {
+  'yyyy.MM.dd' { $DateMask = '\d{4}.\d\d.\d\d' }
+  'yyyyMMdd'   { $DateMask = '\d{8}' }
+}
 
 # Проверим путь локального хранилища - если он доступен, будем писать туда лог
 # 
@@ -416,7 +420,7 @@ Try {
 
 
 Try {
-  $RemoteBackupFileName = $DatabaseName + '_' + $FileDateString + '.bak'
+  $RemoteBackupFileName = $DatabaseName + '_' + $FileDateString + '.' + $FileExtension
   $RemoteBackupFile = ( $RemoteBackupDirectory | Get-ChildItem -Filter $RemoteBackupFileName -File)
   If ( -Not $RemoteBackupFile ) {
     Write-Log ( 'Error: Cannot find remote backup file or no access!' )
@@ -451,7 +455,7 @@ Catch {
   Exit-WithCode 10
 }
 
-$BackupFileMask = '\A' + $DatabaseName + '_' + $DateMask + '.bak\z'
+$BackupFileMask = '\A' + $DatabaseName + '_' + $DateMask + ".$FileExtension\z"
 
 # Для универсальности пришлось оставить процедуры перемещения даже в случае нулевого количества копий
 # Возможна ситуация, когда хранилось определенное количество копий, а мы хотим его уменьшить, для этого нам в любом случае нужно пробежать
