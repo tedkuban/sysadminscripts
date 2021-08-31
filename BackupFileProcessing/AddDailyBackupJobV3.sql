@@ -6,21 +6,21 @@ BEGIN TRANSACTION
 
 -----------------------------------------------------
 -- DO NOT FORGE TO CHANGE VERSION NUMBER AND MODIFICATION DATE !!!
-DECLARE @ScriptVersion nvarchar(10) = '3.0'
-DECLARE @ScriptDate datetime = '20210830'
+DECLARE @ScriptVersion nvarchar(10) = '3.1'
+DECLARE @ScriptDate datetime = '20210831'
 
 -- You need to change this definitions!!!
-DECLARE @DBName sysname = 'RMAnalytics'
---DECLARE @DBType sysname = 'SSDE' -- SQL Server Database Engine
---DECLARE @SecondaryStoragePath nvarchar(100) = 'E:\SQLBACKUP'
-DECLARE @DBType sysname = 'SSAS' -- SQL Server Analysis Services
-DECLARE @SecondaryStoragePath nvarchar(100) = 'E:\SSASBACKUP'
-DECLARE @StartTime varchar(5) = '04:47'
+DECLARE @DBName sysname = 'DM'
+DECLARE @DBType sysname = 'SSDE' -- SQL Server Database Engine
+DECLARE @SecondaryStoragePath nvarchar(100) = 'E:\SQLBACKUP'
+--DECLARE @DBType sysname = 'SSAS' -- SQL Server Analysis Services
+--DECLARE @SecondaryStoragePath nvarchar(100) = 'E:\SSASBACKUP'
+DECLARE @StartTime varchar(5) = '00:00'
 -- If LocalBackupPath is not defined, database will be backed up to PrimaryBackupPath
 DECLARE @LocalBackupPath nvarchar(260) = N''
 -- If LocalBackupPath is defined, database will be backed up to LocalBackupPath, then backup file will be copied to PrimaryBackupPath
---DECLARE @LocalBackupPath nvarchar(260) = N'G:\SQLBackup'
-DECLARE @PrimaryBackupPath nvarchar(260) = N'\\backup-latest.technical\SQLBACKUP\_OLAP'
+--DECLARE @LocalBackupPath nvarchar(260) = N'R:\MSSQL\Backup'
+DECLARE @PrimaryBackupPath nvarchar(260) = N'\\backup-latest.technical\SQLBACKUP'
 DECLARE @SecondaryBackupServer nvarchar(260) = 'backup.technical'
 DECLARE @ScriptFile nvarchar(260) = N'C:\sqlagent\BackupFileProcessing.ps1'
 DECLARE @PSRemotingConfiguration nvarchar(128) = N'SQLAgent'
@@ -35,6 +35,7 @@ DECLARE @FileExtension nvarchar(3) = 'bak'
 
 SET @DBType = UPPER(@DBType)
 DECLARE @BackupStepSubsystem nvarchar(20)
+DECLARE @BackupStepServer nvarchar(20) = NULL
 SET @BackupStepSubsystem = CASE @DBType
   WHEN ('SSDE') THEN N'TSQL'
   WHEN ('SSAS') THEN N'ANALYSISCOMMAND'
@@ -47,14 +48,18 @@ END
 IF (@DBType='SSAS') BEGIN 
   SET @DateFormat = 'yyyyMMdd'
   SET @FileExtension = 'abf'
+  SET @BackupStepServer = N'localhost'
 END
 
-DECLARE @DateSubstitution nvarchar(100)
+DECLARE @DateSubstitution nvarchar(200)
+DECLARE @DateSubstCMD nvarchar(40)
 IF (@DateFormat = 'yyyy.MM.dd') BEGIN
   SET @DateSubstitution = 'SUBSTRING(''$(ESCAPE_SQUOTE(STRTDT))'',1,4) + ''.'' + SUBSTRING(''$(ESCAPE_SQUOTE(STRTDT))'',5,2) + ''.'' + SUBSTRING(''$(ESCAPE_SQUOTE(STRTDT))'',7,2)'
+  SET @DateSubstCMD = '!DT:~0,4!.!DT:~4,2!.!DT:~6,2!'
 END
 ELSE BEGIN -- 'yyyyMMdd'
   SET @DateSubstitution = '$(ESCAPE_SQUOTE(STRTDT))'
+  SET @DateSubstCMD = '!DT!'
 END
 
 -- if a job is found by name, all its steps will be recreated and the schedule will not be changed
@@ -91,7 +96,7 @@ END
 
 DECLARE @Step3SQL nvarchar(max) = N''
 IF ( @LocalBackupPath <> @PrimaryBackupPath ) BEGIN
-  SET @Step3SQL = N'CMD /U /V:ON /C "CHCP 437 && SET DT='+@DateSubstitution+' && ROBOCOPY ^"'+@LocalBackupPath+'\'+@DBName+'^" ^"'+@PrimaryBackupPath+'\'+@DBName+'^" /NP /NJS /NJS /R:3 /W:3 /IF '+@DBName+'_!DT!.'+@FileExtension+' & IF NOT ERRORLEVEL 7 EXIT 0"'
+  SET @Step3SQL = N'CMD /U /V:ON /C "CHCP 437 && SET DT=$(ESCAPE_NONE(STRTDT)) && ROBOCOPY ^"'+@LocalBackupPath+'\'+@DBName+'^" ^"'+@PrimaryBackupPath+'\'+@DBName+'^" /NP /NJS /NJS /R:3 /W:3 /IF '+@DBName+'_'+@DateSubstCMD+'.'+@FileExtension+' & IF NOT ERRORLEVEL 7 EXIT 0"'
 END
 
 DECLARE @Step4SQL nvarchar(max)
@@ -173,46 +178,46 @@ EXEC @ReturnCode = msdb.dbo.sp_add_jobstep @job_id=@jobId, @step_name=N'CreateDi
 		@flags=0
 IF (@@ERROR <> 0 OR @ReturnCode <> 0) GOTO QuitWithRollback
 SET @StepIDD = @StepIDD + 1
-EXEC @ReturnCode = msdb.dbo.sp_add_jobstep @job_id=@JobID, @step_name=N'BackupDB', 
-		@step_id=@StepIDD, 
-		@cmdexec_success_code=0, 
-		@on_success_action=3, 
-		@on_fail_action=2, 
-		@retry_attempts=0, 
-		@retry_interval=0, 
-		@os_run_priority=0, @subsystem=@BackupStepSubsystem, 
-		@command=@Step2SQL, 
-		@server=N'localhost', 
-		@database_name=N'master', 
+EXEC @ReturnCode = msdb.dbo.sp_add_jobstep @job_id=@JobID, @step_name=N'BackupDB',
+		@step_id=@StepIDD,
+		@cmdexec_success_code=0,
+		@on_success_action=3,
+		@on_fail_action=2,
+		@retry_attempts=0,
+		@retry_interval=0,
+		@os_run_priority=0, @subsystem=@BackupStepSubsystem,
+		@command=@Step2SQL,
+		@server=@BackupStepServer,
+		@database_name=N'master',
 		@flags=0
 IF (@@ERROR <> 0 OR @ReturnCode <> 0) GOTO QuitWithRollback
 IF (@Step3SQL <> '') BEGIN
   SET @StepIDD = @StepIDD + 1
   EXEC @ReturnCode = msdb.dbo.sp_add_jobstep @job_id=@jobId, @step_name=N'CopyLocalToPrimary', 
-		@step_id=@StepIDD, 
-		@cmdexec_success_code=0, 
-		@on_success_action=3, 
-		@on_success_step_id=0, 
-		@on_fail_action=2, 
-		@on_fail_step_id=0, 
-		@retry_attempts=0, 
-		@retry_interval=0, 
-		@os_run_priority=0, @subsystem=N'CmdExec', 
-		@command=@Step3SQL, 
+		@step_id=@StepIDD,
+		@cmdexec_success_code=0,
+		@on_success_action=3,
+		@on_success_step_id=0,
+		@on_fail_action=2,
+		@on_fail_step_id=0,
+		@retry_attempts=0,
+		@retry_interval=0,
+		@os_run_priority=0, @subsystem=N'CmdExec',
+		@command=@Step3SQL,
 		@flags=32
   IF (@@ERROR <> 0 OR @ReturnCode <> 0) GOTO QuitWithRollback
 END
 SET @StepIDD = @StepIDD + 1
 EXEC @ReturnCode = msdb.dbo.sp_add_jobstep @job_id=@JobID, @step_name=N'FileProcessing', 
-		@step_id=@StepIDD, 
-		@cmdexec_success_code=0, 
-		@on_success_action=1, 
-		@on_fail_action=2, 
-		@retry_attempts=0, 
-		@retry_interval=0, 
-		@os_run_priority=0, @subsystem=N'CmdExec', 
-		@command=@Step4SQL, 
-		@database_name=N'master', 
+		@step_id=@StepIDD,
+		@cmdexec_success_code=0,
+		@on_success_action=1,
+		@on_fail_action=2,
+		@retry_attempts=0,
+		@retry_interval=0,
+		@os_run_priority=0, @subsystem=N'CmdExec',
+		@command=@Step4SQL,
+		@database_name=N'master',
 		@flags=32
 IF (@@ERROR <> 0 OR @ReturnCode <> 0) GOTO QuitWithRollback
 
@@ -221,16 +226,16 @@ IF (@@ERROR <> 0 OR @ReturnCode <> 0) GOTO QuitWithRollback
 
 IF (@JobFound = 0) BEGIN
    EXEC @ReturnCode = msdb.dbo.sp_add_jobschedule @job_id=@JobID, @name=@ScheduleName, 
-		@enabled=1, 
-		@freq_type=4, 
-		@freq_interval=1, 
-		@freq_subday_type=1, 
-		@freq_subday_interval=0, 
-		@freq_relative_interval=0, 
-		@freq_recurrence_factor=1, 
+		@enabled=1,
+		@freq_type=4,
+		@freq_interval=1,
+		@freq_subday_type=1,
+		@freq_subday_interval=0,
+		@freq_relative_interval=0,
+		@freq_recurrence_factor=1,
 		@active_start_date=20190101,
-		@active_end_date=99991231, 
-		@active_start_time=@ActiveStartTime, 
+		@active_end_date=99991231,
+		@active_start_time=@ActiveStartTime,
 		@active_end_time=235959, @schedule_id = @schedule_id OUTPUT
    IF (@@ERROR <> 0 OR @ReturnCode <> 0) GOTO QuitWithRollback
 END
