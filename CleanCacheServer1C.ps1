@@ -55,9 +55,8 @@ function Start-Sleep($seconds) {
 
 $ErrorActionPreference = "SilentlyContinue"
 
-$NameService1C = "1C:Enterprise 8.3 Remote Server (x86-64)"
-$NameServiceRAS = "1C:Enterprise 8.3 Server Agent (x86-64)"
-
+$NameService1C = "1C:Enterprise 8.3 Server Agent (x86-64)"
+$NameServiceRAS = "1C:Enterprise 8.3 Remote Server (x86-64)"
 
 Get-Service -Name $NameServiceRAS | Stop-Service
 Get-Service -Name $NameService1C | Stop-Service
