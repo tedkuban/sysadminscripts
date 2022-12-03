@@ -41,6 +41,8 @@ Disable-Service -ServiceName "spooler"
 Disable-Service -ServiceName "WPDBusEnum"
 Disable-Service -ServiceName "DiagTrack"
 Disable-Service -ServiceName "dmwappushservice"
+Disable-Service -ServiceName "LicenseManager"
+Disable-Service -ServiceName "AzureAttestService"
 
 # Disable IPv6
 # Set-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip6\Parameters" -Name "DisabledComponents" -Value 0xFFFFFFFF
