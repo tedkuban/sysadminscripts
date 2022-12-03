@@ -55,8 +55,11 @@ function Start-Sleep($seconds) {
 
 $ErrorActionPreference = "SilentlyContinue"
 
-Get-Service -Name "1C:Enterprise 8.3 Remote Server" | Stop-Service
-Get-Service -Name "1C:Enterprise 8.3 Server Agent (x86-64)" | Stop-Service
+$NameService1C = "1C:Enterprise 8.3 Server Agent (x86-64)"
+$NameServiceRAS = "1C:Enterprise 8.3 Remote Server (x86-64)"
+
+Get-Service -Name $NameServiceRAS | Stop-Service
+Get-Service -Name $NameService1C | Stop-Service
 
 Start-Sleep $Pause1
 
@@ -107,6 +110,6 @@ If ($RebootHost) {
 If (!$NoRestart) {
   Start-Sleep $Pause2
   Write-Host "Starting services..."
-  Get-Service -Name "1C:Enterprise 8.3 Server Agent (x86-64)" | Start-Service
-  Get-Service -Name "1C:Enterprise 8.3 Remote Server" | Start-Service
+  Get-Service -Name $NameService1C | Start-Service
+  Get-Service -Name $NameServiceRAS | Start-Service
 }
