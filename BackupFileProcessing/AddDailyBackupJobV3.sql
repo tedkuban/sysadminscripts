@@ -19,7 +19,7 @@ DECLARE @StartTime varchar(5) = '00:00'
 -- If LocalBackupPath is not defined, database will be backed up to PrimaryBackupPath
 DECLARE @LocalBackupPath nvarchar(260) = N''
 -- If LocalBackupPath is defined, database will be backed up to LocalBackupPath, then backup file will be copied to PrimaryBackupPath
---DECLARE @LocalBackupPath nvarchar(260) = N'R:\MSSQL\Backup'
+--DECLARE @LocalBackupPath nvarchar(260) = N'S:\SQLBackup'
 DECLARE @PrimaryBackupPath nvarchar(260) = N'\\backup-latest.technical\SQLBACKUP'
 DECLARE @SecondaryBackupServer nvarchar(260) = 'backup.technical'
 DECLARE @ScriptFile nvarchar(260) = N'C:\sqlagent\BackupFileProcessing.ps1'
