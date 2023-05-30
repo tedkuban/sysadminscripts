@@ -24,8 +24,8 @@
 .Component
     1C:Enterprise v8
 .Notes
-    Version: 0.9
-    Date modified: 2021.06.22
+    Version: 1.0
+    Date modified: 2023.05.30
     Autor: Fedor Kubanets AKA Teddy
     Company: HappyLook
 #>
@@ -38,8 +38,8 @@ Param(
   [Parameter(Mandatory=$False)] [int]$Pause1 = 20,
   [Parameter(Mandatory=$False)] [int]$Pause2 = 5,
   [Parameter()] [switch]$CleanConnectionProfile,
-  [Parameter()] [switch]$RebootHost,
-  [Parameter()] [switch]$NoRestart
+  [Parameter(ParameterSetName="reboot")] [switch]$RebootHost,
+  [Parameter(ParameterSetName="norestart")] [switch]$NoRestart
 )
 
 function Start-Sleep($seconds) {
@@ -100,10 +100,14 @@ If ( $StillRunning -gt 0 ) {
 }
 
 If ($RebootHost) {
-  Write-Host "Rebooting..."
-  #shutdown -r -t 0
+  $NoRestart = $True
+  Write-Host "Will reboot in 5 seconds..."
+  shutdown -r -t 5
   #Restart-Computer
-  Restart-Computer -Force -Confirm:$False
+  #Restart-Computer -AsJob -Force -Confirm:$False
+  #Write-Host "Sleeping..."
+  #Start-Job -ScriptBlock { [System.Threading.Thread]::Sleep(5000); Restart-Computer -Force -Confirm:$False }
+  Write-Host "0"
   #Exit
 }
 
